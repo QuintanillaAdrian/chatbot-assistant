@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 // Usage: wp eval-file create_wc_key.php --allow-root
 if ( ! defined( 'ABSPATH' ) ) {
     require_once __DIR__ . '/../../../../wp-load.php';

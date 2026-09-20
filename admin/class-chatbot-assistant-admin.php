@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 /**
  * The admin-specific functionality of the plugin.
@@ -73,7 +73,13 @@ class Chatbot_Assistant_Admin {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
-		// Leemos el estado local y la bitácora antes de cargar la vista.
+		// Resincronizamos con el Backend antes de leer el estado local, para no
+		// depender únicamente de los webhooks entrantes.
+		$store = get_option( 'chatbot_provision' );
+		if ( ! empty( $store['tenant_id'] ) ) {
+			Chatbot_Assistant_Provision::sync_status_from_backend( $store['tenant_id'] );
+		}
+		// Leemos el estado local (ya resincronizado) y la bitácora antes de cargar la vista.
 		$store = get_option( 'chatbot_provision' );
 		$audit = Chatbot_Assistant_Provision::get_audit_log();
 		$nonce = wp_create_nonce( 'chatbot_resend_provision' );
@@ -82,18 +88,12 @@ class Chatbot_Assistant_Admin {
 	}
 
 	public function ajax_resend_provision() {
-		// Bloqueamos a usuarios sin permisos y validamos nonce para evitar envíos no autorizados.
+		// DEPRECATED: En el nuevo flujo Backend, los reenvíos se hacen a través del Backend API.
+		// Este método ya no está en uso.
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( array( 'error' => 'forbidden' ), 403 );
 		}
-		check_ajax_referer( 'chatbot_resend_provision' );
-		// Reutilizamos el mismo servicio de provisioning para reenviar la última configuración conocida.
-		$result = Chatbot_Assistant_Provision::resend_provision();
-		if ( is_wp_error( $result ) ) {
-			wp_send_json_error( array( 'error' => $result->get_error_message() ), 500 );
-		} else {
-			wp_send_json_success( $result );
-		}
+		wp_send_json_error( array( 'error' => 'deprecated', 'message' => 'Este endpoint ya no está en uso. Usa el Backend API para reenvíos.' ), 410 );
 	}
 
 	public function ajax_update_keys() {
@@ -202,6 +202,12 @@ class Chatbot_Assistant_Admin {
 
 		// Igual que con los estilos, el JS se limita al admin.
 		wp_enqueue_script( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'js/chatbot-assistant-admin.js', array( 'jquery' ), $this->version, false );
+
+		// Localizar script con nonce y URLs
+		wp_localize_script( $this->plugin_name, 'chatbotAdmin', array(
+			'nonce' => wp_create_nonce( 'wp_rest' ),
+			'restUrl' => rest_url( 'chatbot/v1/' ),
+		) );
 
 	}
 

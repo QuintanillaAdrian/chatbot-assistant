@@ -1,3 +1,19 @@
-/test-provisioning.ps1
+/docker-initb.ps1
 /docker-compose.yml
 /.env
+/.env.*
+!/.env.example
+
+# Dependencias (se regeneran con `composer install`)
+/vendor/
+
+# Claude Code / IDE / SO
+/.claude/
+/.vscode/
+/.idea/
+.DS_Store
+Thumbs.db
+
+# Logs y temporales
+*.log
+*.tmp

@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 /**
  * The file that defines the core plugin class
@@ -68,8 +68,8 @@ class Chatbot_Assistant {
 	 */
 	public function __construct() {
 		// Inicialización mínima: versión + slug del plugin.
-		if ( defined( 'Chatbot_Assistant_VERSION' ) ) {
-			$this->version = Chatbot_Assistant_VERSION;
+		if ( defined( 'CHATBOT_ASSISTANT_VERSION' ) ) {
+			$this->version = CHATBOT_ASSISTANT_VERSION;
 		} else {
 			$this->version = '1.0.0';
 		}
@@ -123,7 +123,19 @@ class Chatbot_Assistant {
 		 */
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'public/class-chatbot-assistant-public.php';
 
-		// Provisioning handler
+		// Librería hashids (Composer) — arma/desarma los links cortos de
+		// checkout (`/ir/{token}`, ver Chatbot_Assistant_Public::
+		// maybe_expand_short_checkout_link). `file_exists` por las dudas de
+		// que alguien copie el plugin sin correr antes `composer install`
+		// — sin el autoload, esos links cortos simplemente no se expanden
+		// (el resto del plugin sigue funcionando normal).
+		$hashids_autoload = plugin_dir_path( dirname( __FILE__ ) ) . 'vendor/autoload.php';
+		if ( file_exists( $hashids_autoload ) ) {
+			require_once $hashids_autoload;
+		}
+
+		// Provisioning and Backend client
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-backend-client.php';
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-chatbot-assistant-provision.php';
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-chatbot-assistant-cli.php';
 
@@ -186,6 +198,45 @@ class Chatbot_Assistant {
 		$this->loader->add_action( 'wp_enqueue_scripts', $plugin_public, 'enqueue_styles' );
 		$this->loader->add_action( 'wp_enqueue_scripts', $plugin_public, 'enqueue_scripts' );
 		$this->loader->add_action( 'init', 'Chatbot_Assistant_Provision', 'maybe_run_pending_provision' );
+
+		// Desarma el link corto de checkout (`/ir/{token}`, ver
+		// services/sales.ts en chatbot-backend) y redirige al link largo
+		// real — prioridad 1, la más temprana de todas, porque tiene que
+		// correr ANTES de que exista cualquier `$_GET['add-to-cart']` que
+		// mirar (acá no hay ninguno todavía, el token viene en la URL, no
+		// en query params).
+		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_expand_short_checkout_link', 1 );
+
+		// Desarma el link corto de LOGIN (`/entrar/{token}`, ver
+		// services/sales.ts en chatbot-backend, Fix #3 de "me mostró
+		// pedidos que no son mios", 2026-09-10) y loguea de verdad al
+		// cliente antes de redirigirlo al link de compra — prioridad 1,
+		// misma que la de arriba (rutas mutuamente excluyentes, el orden
+		// entre las dos no importa).
+		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_handle_login_link', 1 );
+
+		// Rechaza (expiración + firma HMAC) un link de checkout viejo del bot
+		// antes de que llegue a los dos hooks de abajo o al add-to-cart
+		// nativo de WooCommerce — prioridad 4, antes de la 5 de esos dos.
+		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_reject_expired_checkout_link', 4 );
+
+		// Vacía el carrito antes del add-to-cart nativo de WooCommerce cuando
+		// el link del bot trae `limpiar_carrito` (ver services/sales.ts en
+		// chatbot-backend) — prioridad 5, antes de la 20 que usa WooCommerce.
+		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_clear_cart_before_add', 5 );
+
+		// Fija (no suma) la cantidad de un producto puntual antes del
+		// add-to-cart nativo, cuando el link del bot trae `reemplazar_item`
+		// (siempre lo trae — ver services/sales.ts) — evita que abrir el
+		// mismo link dos veces duplique la cantidad pedida.
+		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_replace_product_qty_before_add', 5 );
+
+		// Prellena el campo de teléfono del checkout con el que el bot ya
+		// tiene cacheado para esta conversación (`billing_phone` en la URL
+		// — ver services/sales.ts en chatbot-backend, Fix #2 de "me mostró
+		// pedidos que no son mios", 2026-09-10) — prioridad 6, no depende
+		// del orden con los hooks de arriba (no toca el carrito).
+		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_prefill_billing_phone', 6 );
 
 		// register REST routes for provisioning
 		$this->loader->add_action( 'rest_api_init', 'Chatbot_Assistant_Provision', 'register_routes' );

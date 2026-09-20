@@ -1,215 +1,376 @@
-﻿<?php
-
+<?php
 /**
- * Provide a admin area view for the plugin
- *
- * This file is used to markup the admin-facing aspects of the plugin.
- *
- * @link       https://https://portafolio-adrianquintanilla.vercel.app/
- * @since      1.0.0
+ * Admin view - 5-Step Wizard UI
  *
  * @package    Chatbot_Assistant
  * @subpackage Chatbot_Assistant/admin/partials
  */
 ?>
-
-<!-- This file should primarily consist of HTML with a little bit of PHP. -->
 <div class="wrap">
-	<h1>Asistente Chatbot — Provisionamiento</h1>
-	<!-- Esta pantalla muestra un resumen simple para terceros y deja el detalle técnico como opcional. -->
-	<p>Conexión más reciente con el asistente virtual.</p>
-	<?php if ( empty( $store ) ) : ?>
-		<p><strong>Aún no hay datos de provisionamiento almacenados.</strong></p>
-		<p>WordPress todavía no guardó una alta válida en la opción <code>chatbot_provision</code>.</p>
-	<?php else: ?>
-		<h2>Resumen de conexión</h2>
-		<?php
-			$last_status = isset( $store['mcp_status'] ) ? (int) $store['mcp_status'] : 0;
-			$is_connected = ( $last_status >= 200 && $last_status < 300 );
-		?>
-			<p><strong>Estado:</strong>
-				<span style="color:<?php echo $is_connected ? 'green' : 'red'; ?>;font-weight:600"><?php echo $is_connected ? 'Conexion activa' : 'Conexion fallida'; ?></span>
-			</p>
-		<!-- Mantenemos el detalle técnico oculto por defecto para no exponer demasiada información. -->
-		
-					<h3>Credenciales</h3>
-		<!-- Compact container to avoid expanding the page; hide sensitive or irrelevant keys -->
-		<div style="max-height:200px;overflow:auto;border:1px solid #ddd;padding:8px;background:#fff">
-		<table class="widefat fixed" style="margin:0;border-collapse:collapse;">
-			<tbody>
-				<?php
-					// Mapeo de claves internas a etiquetas en español.
-					$labels = array(
-						'siteUrl' => 'URL del sitio',
-						'storeName' => 'Nombre de la tienda',
-						'wordpressVersion' => 'Versión WP',
-						'woocommerceVersion' => 'Versión WooCommerce',
-						'consumerKey' => 'Clave pública',
-						'consumerSecret_encrypted' => 'Secreto (cifrado)',
-						'consumerSecret_last4' => 'Últimos 4 del secreto',
-						'synced_at' => 'Sincronizado',
-						'mcp_updated_at' => 'Última actualización',
+	<h1>Asistente Chatbot — Onboarding</h1>
 
-					);
-				?>
-				<?php foreach ( $store as $k => $v ) : ?>
-					<?php if ( in_array( $k, array( 'signatureBaseUrl', 'oauthSignatureBaseUrl', 'mcp_status', 'mcp_response', 'state', 'attempts', 'auto_attempted' ), true ) ) { continue; } ?>
+	<?php if ( empty( $store ) || empty( $store['tenant_id'] ) ) : ?>
+		<div class="notice notice-warning">
+			<p>Inicializando provisioning... Si persiste, ejecuta <code>wp chatbot provision-auto</code>.</p>
+		</div>
+	<?php else :
+		$current = (int) ( $store['current_step'] ?? 1 );
+		$steps   = array( 1 => 'Registro', 2 => 'WooCommerce', 3 => 'WhatsApp', 4 => 'Personalización', 5 => 'Activación' );
+	?>
+
+		<!-- Indicador de progreso -->
+		<div style="margin: 30px 0; padding: 20px; background: #f5f5f5; border-radius: 8px;">
+			<div style="display: flex; justify-content: space-between; align-items: center;">
+				<?php foreach ( $steps as $step => $label ) : ?>
+					<div style="flex: 1; text-align: center; position: relative;">
+						<div style="
+							width: 40px; height: 40px; margin: 0 auto 8px; border-radius: 50%;
+							display: flex; align-items: center; justify-content: center;
+							font-weight: bold; color: white;
+							background: <?php echo $step <= $current ? '#0073aa' : '#ccc'; ?>;
+						"><?php echo $step; ?></div>
+						<div style="font-size: 12px; color: #666;"><?php echo esc_html( $label ); ?></div>
+						<?php if ( $step < 5 ) : ?>
+							<div style="position: absolute; top: 20px; left: 50%; width: 100%; height: 2px;
+								background: <?php echo $step < $current ? '#0073aa' : '#ccc'; ?>; margin-left: 20px;
+							"></div>
+						<?php endif; ?>
+					</div>
+				<?php endforeach; ?>
+			</div>
+		</div>
+
+		<!-- Contenido de pasos -->
+		<div style="margin-top: 40px;">
+
+			<!-- PASOS 1 & 2 -->
+			<div style="padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px;">
+				<h2>Paso 1 &amp; 2: Registro y Conexión WooCommerce</h2>
+				<table style="width: 100%; border-collapse: collapse;">
 					<tr>
-						<th style="width:200px"><?php echo htmlspecialchars( isset( $labels[ $k ] ) ? $labels[ $k ] : ucwords( str_replace( array( '_', '-' ), array( ' ', ' ' ), $k ) ), ENT_QUOTES, 'UTF-8' ); ?></th>
-						<td style="vertical-align:top;padding:6px 8px;">
-							<?php
-								// Never display secrets or full MCP responses in the admin UI raw.
-								if ( in_array( $k, array( 'consumerSecret_encrypted', 'mcp_response' ), true ) ) {
-									echo htmlspecialchars( '[redacted]', ENT_QUOTES, 'UTF-8' );
-								} elseif ( 'consumerKey' === $k && is_string( $v ) ) {
-									// show only prefix and last 6 chars
-									$safe = substr( $v, 0, 3 ) . '...' . substr( $v, -6 );
-									echo htmlspecialchars( $safe, ENT_QUOTES, 'UTF-8' );
-								} elseif ( is_bool( $v ) ) {
-									echo htmlspecialchars( $v ? 'Sí' : 'No', ENT_QUOTES, 'UTF-8' );
-								} else {
-									echo htmlspecialchars( is_string( $v ) ? $v : print_r( $v, true ), ENT_QUOTES, 'UTF-8' );
-								}
-							?>
+						<td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Tenant ID:</strong></td>
+						<td style="padding: 8px; border-bottom: 1px solid #eee; font-family: monospace; font-size: 11px;">
+							<?php echo esc_html( $store['tenant_id'] ?? 'N/A' ); ?>
 						</td>
 					</tr>
-				<?php endforeach; ?>
-			</tbody>
-		</table>
-		</div>
-		<p><strong>Recomendación:</strong> si el estado es "Conexión fallida", pulsa el botón <em>Actualizar conexión</em> para reintentar la conexión.</p>
-
-		<h3 style="margin-top:18px">Actualizar credenciales manualmente</h3>
-		<p>Si ya tienes un par de claves generadas en WooCommerce, puedes pegarlas aquí. El plugin validará la pareja y la guardará solo si es correcta.</p>
-		<form id="chatbot-keys-form" style="max-width:720px;background:#fff;padding:12px;border:1px solid #eee;">
-			<table class="form-table">
-				<tbody>
 					<tr>
-						<th scope="row"><label for="chatbot_consumerKey">Clave pública (consumer key)</label></th>
-						<td><input id="chatbot_consumerKey" name="consumerKey" type="text" class="regular-text" value="<?php echo htmlspecialchars( isset( $store['consumerKey'] ) ? $store['consumerKey'] : '', ENT_QUOTES, 'UTF-8' ); ?>" required></td>
-					</tr>
-					<tr>
-						<th scope="row"><label for="chatbot_consumerSecret">Secreto (consumer secret)</label></th>
-						<td>
-							<input id="chatbot_consumerSecret" name="consumerSecret" type="password" class="regular-text" placeholder="Pega el secreto generado en WooCommerce" required>
-							<?php if ( ! empty( $store['consumerSecret_last4'] ) ) : ?>
-								<p class="description">Últimos 4: <?php echo htmlspecialchars( $store['consumerSecret_last4'], ENT_QUOTES, 'UTF-8' ); ?></p>
+						<td style="padding: 8px;"><strong>Estado WC:</strong></td>
+						<td style="padding: 8px;">
+							<?php if ( ! empty( $store['wc_verified'] ) ) : ?>
+								<span style="color: green; font-weight: bold;">&#10003; Verificado</span>
+							<?php else : ?>
+								<span style="color: #999;">En progreso...</span>
 							<?php endif; ?>
 						</td>
 					</tr>
-				</tbody>
-			</table>
-			<p>
-				<button id="chatbot-keys-submit" class="button button-secondary">Guardar credenciales</button>
-				<span id="chatbot-keys-result" style="margin-left:12px"></span>
-			</p>
-		</form>
+					<tr>
+						<td style="padding: 8px;"><strong>Última sync con Backend:</strong></td>
+						<td style="padding: 8px;">
+							<?php if ( ! empty( $store['status_synced_at'] ) ) : ?>
+								<span style="color: #333;"><?php echo esc_html( $store['status_synced_at'] ); ?></span>
+								<?php if ( isset( $store['last_sync_ok'] ) && false === $store['last_sync_ok'] ) : ?>
+									<br><span style="color: #d32f2f;">&#9888; El intento más reciente de conectar con el Backend falló — mostrando el último estado confirmado</span>
+								<?php endif; ?>
+							<?php else : ?>
+								<span style="color: #d32f2f;">Nunca — no se pudo confirmar con el Backend, datos posiblemente desactualizados</span>
+							<?php endif; ?>
+						</td>
+					</tr>
+				</table>
+			</div>
 
-		<details style="margin-top:16px;">
-			<summary>Mostrar detalle técnico</summary>
+			<!-- PASO 3: Elegí tus canales -->
+			<?php if ( $current >= 2 ) : ?>
+				<div style="padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px;">
+					<h2>Paso 3: Elegí tus canales</h2>
+					<p>Conectá al menos un canal para que tu bot pueda recibir mensajes. Podés activar los dos.</p>
 
-		<h3>Registro de auditoría</h3>
-		<!-- Tabla con scroll para que no expanda la página. -->
-		<div style="max-height:240px;overflow:auto;border:1px solid #ddd;padding:8px;background:#fff">
-		<table class="widefat fixed" style="margin:0;border-collapse:collapse;">
-			<thead>
-				<tr>
-					<th style="width:150px">Fecha</th>
-					<th style="width:80px">Nivel</th>
-					<th>Mensaje</th>
-				</tr>
-			</thead>
-			<tbody>
-				<?php if ( empty( $audit ) ) : ?>
-					<tr><td colspan="3">No hay entradas en el registro de auditoría.</td></tr>
-				<?php else : ?>
+					<div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 15px;">
+
+						<!-- Telegram -->
+						<div style="flex: 1; min-width: 260px; padding: 15px; background: #fafafa; border: 1px solid #eee; border-radius: 6px;">
+							<h3 style="margin-top: 0;">Telegram</h3>
+							<?php if ( ! empty( $store['telegram_verified'] ) ) : ?>
+								<div style="padding: 12px; background: #ecf0f1; border-left: 4px solid #27ae60;">
+									<strong>&#10003; Telegram Conectado</strong>
+									<?php if ( ! empty( $store['telegram_bot_username'] ) ) : ?>
+										— Bot: <code>@<?php echo esc_html( $store['telegram_bot_username'] ); ?></code>
+									<?php endif; ?>
+								</div>
+								<?php if ( ! empty( $store['telegram_owner_confirmed'] ) ) : ?>
+									<div style="padding: 12px; background: #ecf0f1; border-left: 4px solid #27ae60; margin-top: 8px;">
+										<strong>&#10003; Confirmado</strong> — ya recibimos un mensaje tuyo, en Paso 5 te va a llegar la prueba final.
+									</div>
+								<?php elseif ( ! empty( $store['telegram_bot_username'] ) ) : ?>
+									<div style="padding: 12px; background: #fff8e1; border-left: 4px solid #f0ad4e; margin-top: 8px;">
+										Falta un paso: abrí Telegram y escribile cualquier mensaje a
+										<a href="https://t.me/<?php echo esc_attr( $store['telegram_bot_username'] ); ?>" target="_blank" rel="noopener noreferrer">
+											@<?php echo esc_html( $store['telegram_bot_username'] ); ?>
+										</a>
+										para confirmar que la conexión funciona — sin eso no podemos mandarte el mensaje de prueba en el Paso 5.
+										<br><br>
+										<button type="button" class="button" id="chatbot-telegram-check-confirm-btn">Ya le escribí, revisar</button>
+									</div>
+								<?php endif; ?>
+								<p style="margin: 10px 0 0;">
+									<a href="#" id="chatbot-telegram-reconnect-link" style="font-size: 12px;">¿Reconectar o cambiar de bot?</a>
+								</p>
+							<?php endif; ?>
+							<div id="chatbot-telegram-connect-form" <?php echo ! empty( $store['telegram_verified'] ) ? 'style="display: none; margin-top: 10px;"' : ''; ?>>
+								<p class="description">
+									Creá un bot con <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a>
+									y pegá acá el token que te da.
+								</p>
+								<input type="text" id="chatbot-telegram-token" class="regular-text" placeholder="123456:ABC-DEF...">
+								<br><br>
+								<button type="button" class="button button-primary" id="chatbot-telegram-connect-btn">Conectar Telegram</button>
+								<div id="chatbot-telegram-status" style="margin-top: 10px;"></div>
+							</div>
+						</div>
+
+						<!-- WhatsApp -->
+						<div style="flex: 1; min-width: 260px; padding: 15px; background: #fafafa; border: 1px solid #eee; border-radius: 6px;">
+							<h3 style="margin-top: 0;">WhatsApp</h3>
+							<?php if ( ! empty( $store['wa_verified'] ) ) : ?>
+								<div style="padding: 12px; background: #ecf0f1; border-left: 4px solid #27ae60;">
+									<strong>&#10003; WhatsApp Conectado</strong>
+									<?php if ( ! empty( $store['phone_number'] ) ) : ?>
+										— Número: <code><?php echo esc_html( $store['phone_number'] ); ?></code>
+									<?php endif; ?>
+								</div>
+								<p style="margin: 10px 0 0;">
+									<a href="#" id="chatbot-wa-reconnect-link" style="font-size: 12px;">¿Reconectar o cambiar de número?</a>
+								</p>
+							<?php endif; ?>
+							<div id="chatbot-wa-connect-form" <?php echo ! empty( $store['wa_verified'] ) ? 'style="display: none; margin-top: 10px;"' : ''; ?>>
+								<div style="padding: 12px; background: #fff8e1; border-left: 4px solid #f0ad4e; margin-bottom: 10px;">
+									Temporalmente no disponible — requiere verificación de negocio en Meta, en trámite.
+								</div>
+								<button type="button" class="button button-primary" id="chatbot-wa-connect-btn" disabled>Conectar WhatsApp</button>
+								<div id="chatbot-wa-status" style="margin-top: 10px;"></div>
+							</div>
+						</div>
+
+					</div>
+				</div>
+			<?php endif; ?>
+
+			<!-- PASO 4: Personalización -->
+			<?php if ( $current >= 3 ) : ?>
+				<div style="padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px;">
+					<h2>Paso 4: Personalizar Bot</h2>
+					<form id="chatbot-config-form">
+						<table class="form-table">
+							<tr>
+								<th><label for="chatbot-bot-name">Nombre del Bot</label></th>
+								<td><input type="text" id="chatbot-bot-name" name="bot_name" class="regular-text"
+									placeholder="ej: Asistente Sofia"
+									value="<?php echo esc_attr( $store['bot_name'] ?? '' ); ?>"></td>
+							</tr>
+							<tr>
+								<th><label for="chatbot-welcome-msg">Mensaje de Bienvenida</label></th>
+								<td><textarea id="chatbot-welcome-msg" name="welcome_message" class="large-text" rows="3"
+									placeholder="ej: Hola! Soy Sofia, tu asistente virtual..."
+									><?php echo esc_textarea( $store['welcome_message'] ?? '' ); ?></textarea></td>
+							</tr>
+							<tr>
+								<th><label for="chatbot-system-prompt">System Prompt</label></th>
+								<td>
+									<textarea id="chatbot-system-prompt" name="system_prompt" class="large-text" rows="4"
+										placeholder="Define cómo debe comportarse el bot..."
+										><?php echo esc_textarea( $store['system_prompt'] ?? '' ); ?></textarea>
+									<p class="description">Describe el rol, tono y comportamiento del bot.</p>
+								</td>
+							</tr>
+						</table>
+						<button type="submit" class="button button-primary">Guardar Configuración</button>
+						<span id="chatbot-config-status" style="margin-left: 10px;"></span>
+					</form>
+				</div>
+			<?php endif; ?>
+
+			<!-- PASO 5: Activación -->
+			<?php if ( $current >= 4 ) : ?>
+				<div style="padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px;">
+					<h2>Paso 5: Activar Bot</h2>
+					<div style="padding: 12px; background: #f0f8ff; border-left: 4px solid #0073aa; margin-bottom: 15px;">
+						<p><strong>WooCommerce:</strong> <?php echo ! empty( $store['wc_verified'] ) ? '&#10003; Verificado' : '&#10007; Pendiente'; ?></p>
+						<p><strong>Telegram:</strong> <?php echo ! empty( $store['telegram_verified'] ) ? '&#10003; Conectado' : '&#10007; No conectado'; ?></p>
+						<p><strong>WhatsApp:</strong> <?php echo ! empty( $store['wa_verified'] ) ? '&#10003; Conectado' : '&#10007; No conectado'; ?></p>
+					</div>
+					<?php
+					$has_channel = ! empty( $store['telegram_verified'] ) || ! empty( $store['wa_verified'] );
+					?>
+					<?php if ( ! empty( $store['wc_verified'] ) && $has_channel ) : ?>
+						<?php if ( isset( $store['status'] ) && 'active' === $store['status'] ) : ?>
+							<div style="padding: 12px; background: #ecf0f1; border-left: 4px solid #27ae60;">
+								<strong style="color: #27ae60;">&#10003; Bot Activo</strong>
+							</div>
+						<?php else : ?>
+							<?php if ( ! empty( $store['telegram_verified'] ) ) : ?>
+								<p class="description" style="margin-bottom: 10px;">
+									<?php if ( ! empty( $store['telegram_owner_confirmed'] ) ) : ?>
+										Al activar te va a llegar por Telegram un mensaje de prueba con el resumen de tu configuración.
+									<?php else : ?>
+										No vas a recibir el mensaje de prueba por Telegram porque todavía no confirmaste la conexión en el Paso 3 — el bot igual queda activo para tus clientes.
+									<?php endif; ?>
+								</p>
+							<?php endif; ?>
+							<button type="button" class="button button-primary button-large" id="chatbot-activate-btn">Activar Bot</button>
+							<span id="chatbot-activate-status" style="margin-left: 10px;"></span>
+						<?php endif; ?>
+					<?php else : ?>
+						<p style="color: #d32f2f;">Completa WooCommerce y conectá al menos un canal (Paso 3) antes de activar.</p>
+					<?php endif; ?>
+				</div>
+			<?php endif; ?>
+
+		</div>
+
+		<!-- Info técnica (colapsable) -->
+		<details style="margin-top: 40px; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+			<summary style="cursor: pointer; font-weight: bold; color: #0073aa;">Información Técnica</summary>
+			<div style="margin-top: 10px; padding: 10px; background: #f5f5f5; font-family: monospace; font-size: 11px; overflow: auto;">
+				<strong>Estado:</strong>
+				<pre><?php echo esc_html( wp_json_encode( $store, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ); ?></pre>
+				<?php if ( ! empty( $audit ) && is_array( $audit ) ) : ?>
+					<strong>Bitácora (últimas 10):</strong>
 					<?php foreach ( $audit as $entry ) : ?>
-						<tr>
-							<td><?php echo htmlspecialchars( $entry['created_at'] ?? '', ENT_QUOTES, 'UTF-8' ); ?></td>
-							<td><?php echo htmlspecialchars( $entry['level'] ?? '', ENT_QUOTES, 'UTF-8' ); ?></td>
-							<td><?php echo htmlspecialchars( $entry['message'] ?? '', ENT_QUOTES, 'UTF-8' ); ?></td>
-						</tr>
+						<div style="margin: 5px 0; padding: 5px; background: white; border-left: 2px solid #0073aa;">
+							[<?php echo esc_html( $entry['created_at'] ?? '' ); ?>]
+							<strong><?php echo esc_html( $entry['level'] ?? 'info' ); ?>:</strong>
+							<?php echo esc_html( $entry['message'] ?? '' ); ?>
+							<?php if ( ! empty( $entry['context'] ) ) : ?>
+								<br><code><?php echo esc_html( wp_json_encode( $entry['context'] ) ); ?></code>
+							<?php endif; ?>
+						</div>
 					<?php endforeach; ?>
 				<?php endif; ?>
-			</tbody>
-		</table>
-		</div>
+			</div>
 		</details>
-		<p>
-				<!-- Botón que reutiliza el AJAX del admin para reintentar el envío al MCP. -->
-			<button id="chatbot-resend" class="button button-primary">Actualizar conexión</button>
-			<span id="chatbot-result" style="margin-left:10px"></span>
-		</p>
+
 	<?php endif; ?>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function(){
-	var btn = document.getElementById('chatbot-resend');
-	if (!btn) return;
-	btn.addEventListener('click', function(){
-		var result = document.getElementById('chatbot-result');
-		result.textContent = 'Enviando...';
-		var xhr = new XMLHttpRequest();
-		var nonce = <?php echo json_encode( $nonce ?? '' ); ?>;
-		var url = ajaxurl + '?action=chatbot_resend_provision&_ajax_nonce=' + encodeURIComponent(nonce);
-		xhr.open('GET', url);
-		xhr.onload = function(){
-			try{
-				var resp = JSON.parse(xhr.responseText);
-				if ( resp.success && resp.data && resp.data.status ) {
-					var code = resp.data.status;
-					if ( code >= 200 && code < 300 ) {
-						result.textContent = 'Conexión actualizada (' + code + ')';
-						setTimeout(function(){ window.location.reload(); }, 800);
-					} else {
-						result.textContent = 'Error (' + code + ')';
-					}
-				} else {
-					result.textContent = 'Respuesta inesperada';
-				}
-			} catch(e){ result.textContent = 'Respuesta no procesable'; }
-		};
-		xhr.onerror = function(){ result.textContent = 'Error de red'; };
-		xhr.send();
-	});
-});
-</script>
-<script>
-document.addEventListener('DOMContentLoaded', function(){
-	var form = document.getElementById('chatbot-keys-form');
-	if (!form) return;
-	form.addEventListener('submit', function(e){
-		e.preventDefault();
-		var btn = document.getElementById('chatbot-keys-submit');
-		var result = document.getElementById('chatbot-keys-result');
-		btn.disabled = true;
-		result.textContent = 'Guardando...';
+document.addEventListener('DOMContentLoaded', function () {
+	var REST_NONCE = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
 
-		var fd = new FormData();
-		fd.append('action', 'chatbot_update_keys');
-		fd.append('_ajax_nonce', <?php echo json_encode( $nonce_update ?? '' ); ?> );
-		fd.append('consumerKey', document.getElementById('chatbot_consumerKey').value );
-		fd.append('consumerSecret', document.getElementById('chatbot_consumerSecret').value );
+	var waBtn = document.getElementById('chatbot-wa-connect-btn');
+	if (waBtn) {
+		waBtn.addEventListener('click', function () {
+			var statusEl = document.getElementById('chatbot-wa-status');
+			statusEl.textContent = 'Obteniendo URL de Meta...';
+			fetch('/wp-json/chatbot/v1/wa/signup-url', { headers: { 'X-WP-Nonce': REST_NONCE } })
+				.then(function (r) { return r.json(); })
+				.then(function (data) {
+					if (data.signup_url) { window.location.href = data.signup_url; }
+					else { statusEl.textContent = 'Error: ' + (data.error || 'Respuesta inesperada'); }
+				})
+				.catch(function () { statusEl.textContent = 'Error de red'; });
+		});
+	}
 
-		fetch(ajaxurl, { method: 'POST', body: fd, credentials: 'same-origin' })
-			.then(function(resp){ return resp.json().then(function(json){ return { status: resp.status, body: json }; }); })
-			.then(function(obj){
-				var status = obj.status;
-				var json = obj.body;
-				if ( status >= 200 && status < 300 && json && json.success ) {
-					result.textContent = 'Guardado correctamente';
-					setTimeout(function(){ window.location.reload(); }, 800);
-				} else if ( json && json.data && json.data.error === 'validation_failed' ) {
-					result.textContent = json.data.message || 'Validación fallida';
-				} else if ( json && json.data && json.data.error ) {
-					result.textContent = 'Error: ' + json.data.error;
-				} else {
-					result.textContent = 'Respuesta inesperada';
-				}
+	var telegramCheckConfirmBtn = document.getElementById('chatbot-telegram-check-confirm-btn');
+	if (telegramCheckConfirmBtn) {
+		telegramCheckConfirmBtn.addEventListener('click', function () {
+			// display_admin_page() re-sincroniza con el Backend en cada carga
+			// (ver admin/class-chatbot-assistant-admin.php) — no hace falta
+			// ningún endpoint nuevo, alcanza con recargar.
+			telegramCheckConfirmBtn.disabled = true;
+			telegramCheckConfirmBtn.textContent = 'Revisando...';
+			window.location.reload();
+		});
+	}
+
+	var telegramReconnectLink = document.getElementById('chatbot-telegram-reconnect-link');
+	if (telegramReconnectLink) {
+		telegramReconnectLink.addEventListener('click', function (e) {
+			e.preventDefault();
+			if (!confirm('¿Seguro que querés reconectar? Esto va a reemplazar el bot de Telegram actual.')) {
+				return;
+			}
+			document.getElementById('chatbot-telegram-connect-form').style.display = 'block';
+			telegramReconnectLink.style.display = 'none';
+		});
+	}
+
+	var waReconnectLink = document.getElementById('chatbot-wa-reconnect-link');
+	if (waReconnectLink) {
+		waReconnectLink.addEventListener('click', function (e) {
+			e.preventDefault();
+			if (!confirm('¿Seguro que querés reconectar? Esto va a reemplazar el número de WhatsApp actual.')) {
+				return;
+			}
+			document.getElementById('chatbot-wa-connect-form').style.display = 'block';
+			waReconnectLink.style.display = 'none';
+		});
+	}
+
+	var telegramBtn = document.getElementById('chatbot-telegram-connect-btn');
+	if (telegramBtn) {
+		telegramBtn.addEventListener('click', function () {
+			var tokenEl = document.getElementById('chatbot-telegram-token');
+			var statusEl = document.getElementById('chatbot-telegram-status');
+			var token = tokenEl.value.trim();
+			if (!token) {
+				statusEl.textContent = 'Pegá el token que te dio @BotFather primero';
+				return;
+			}
+			telegramBtn.disabled = true;
+			statusEl.textContent = 'Conectando con Telegram...';
+			fetch('/wp-json/chatbot/v1/telegram/connect', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': REST_NONCE },
+				body: JSON.stringify({ bot_token: token })
 			})
-			.catch(function(){ result.textContent = 'Error de red'; })
-			.finally(function(){ btn.disabled = false; setTimeout(function(){ result.textContent = ''; }, 4000); });
-	});
+				.then(function (r) { return r.json(); })
+				.then(function (data) {
+					if (data.success) { statusEl.textContent = 'Conectado!'; setTimeout(function () { window.location.reload(); }, 800); }
+					else { statusEl.textContent = 'Error: ' + (data.error || ''); telegramBtn.disabled = false; }
+				})
+				.catch(function () { statusEl.textContent = 'Error de red'; telegramBtn.disabled = false; });
+		});
+	}
+
+	var configForm = document.getElementById('chatbot-config-form');
+	if (configForm) {
+		configForm.addEventListener('submit', function (e) {
+			e.preventDefault();
+			var statusEl = document.getElementById('chatbot-config-status');
+			statusEl.textContent = 'Guardando...';
+			fetch('/wp-json/chatbot/v1/config', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': REST_NONCE },
+				body: JSON.stringify({
+					bot_name: document.getElementById('chatbot-bot-name').value,
+					welcome_message: document.getElementById('chatbot-welcome-msg').value,
+					system_prompt: document.getElementById('chatbot-system-prompt').value,
+				})
+			})
+				.then(function (r) { return r.json(); })
+				.then(function (d) {
+					statusEl.textContent = d.success ? 'Guardado correctamente' : ('Error: ' + (d.error || ''));
+					if (d.success) { setTimeout(function () { window.location.reload(); }, 800); }
+				})
+				.catch(function () { statusEl.textContent = 'Error de red'; });
+		});
+	}
+
+	var activateBtn = document.getElementById('chatbot-activate-btn');
+	if (activateBtn) {
+		activateBtn.addEventListener('click', function () {
+			var statusEl = document.getElementById('chatbot-activate-status');
+			activateBtn.disabled = true;
+			statusEl.textContent = 'Activando...';
+			fetch('/wp-json/chatbot/v1/activate', { method: 'POST', headers: { 'X-WP-Nonce': REST_NONCE } })
+				.then(function (r) { return r.json(); })
+				.then(function (d) {
+					if (d.success) { statusEl.textContent = 'Bot activado!'; setTimeout(function () { window.location.reload(); }, 800); }
+					else { statusEl.textContent = 'Error: ' + (d.error || ''); activateBtn.disabled = false; }
+				})
+				.catch(function () { statusEl.textContent = 'Error de red'; activateBtn.disabled = false; });
+		});
+	}
 });
 </script>

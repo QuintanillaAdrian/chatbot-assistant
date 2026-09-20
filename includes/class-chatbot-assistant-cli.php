@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * WP-CLI command wrapper for provisioning actions.
  */
@@ -19,67 +19,89 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
     class Chatbot_Assistant_CLI {
 
         /**
-         * Provision command entrypoint.
+         * Ejecuta automáticamente los Pasos 1-2 de provisioning.
+         * Ideal para scripts de instalación automatizada.
          *
-         * Supported flags (assoc args):
-         *  --generate_keys : boolean (create WooCommerce keys locally)
-         *  --persist_secret : boolean (store consumerSecret encrypted locally)
+         * ## EXAMPLES
+         *     wp chatbot provision-auto
          *
-         * The function builds the parameters array and calls the same
-         * handler the REST endpoint would use. We prefer an in-process call
-         * so it's fast and works inside containers/CI without relying on
-         * networking.
+         * @subcommand provision-auto
          */
-        public function provision( $args, $assoc_args ) {
-            $params = array();
-            if ( isset( $assoc_args['generate_keys'] ) && filter_var( $assoc_args['generate_keys'], FILTER_VALIDATE_BOOLEAN ) ) {
-                $params['generate_keys'] = true;
-            }
-            if ( isset( $assoc_args['persist_secret'] ) && filter_var( $assoc_args['persist_secret'], FILTER_VALIDATE_BOOLEAN ) ) {
-                $params['persist_secret'] = true;
-            }
+        public function provision_auto( $args, $assoc_args ) {
+            WP_CLI::line( 'Iniciando automatización de provisioning (Pasos 1-2)...' );
 
-            if ( ! class_exists( 'WP_REST_Request' ) ) {
-                WP_CLI::error( 'WP REST classes not available in this context.' );
-            }
+            // Ejecutar automáticamente Pasos 1-2 (invocación explícita, se salta el guard is_admin())
+            Chatbot_Assistant_Provision::maybe_run_pending_provision( true );
 
-            // Try to construct a WP_REST_Request so the provisioning handler receives
-            // the same shape it expects when called over HTTP. In some CLI contexts
-            // WP internals don't populate JSON params correctly, so we provide a
-            // tiny fallback object that implements get_json_params().
-            $request = new WP_REST_Request( 'POST', '/chatbot/v1/provision' );
-            $request->set_body_params( $params );
+            // Verificar resultado
+            $store = get_option( 'chatbot_provision', array() );
 
-            if ( ! empty( $request->get_json_params() ) ) {
-                $response = Chatbot_Assistant_Provision::handle_provision( $request );
+            if ( ! empty( $store['wc_verified'] ) ) {
+                WP_CLI::success( 'Provisioning completado exitosamente!' );
+                WP_CLI::line( '' );
+                WP_CLI::line( 'Estado del Tenant:' );
+                WP_CLI::line( '  • tenant_id: ' . ( $store['tenant_id'] ?? 'N/A' ) );
+                WP_CLI::line( '  • current_step: ' . ( $store['current_step'] ?? 'N/A' ) );
+                WP_CLI::line( '  • wc_verified: true' );
+                WP_CLI::line( '  • status: ' . ( $store['status'] ?? 'N/A' ) );
+                WP_CLI::line( '' );
+                WP_CLI::line( 'Proximos pasos: Completar Pasos 3-5 (WhatsApp, personalizacion, activacion) desde el admin panel' );
             } else {
-                $fallback = new class( $params ) {
-                    private $p;
-                    public function __construct( $p ) { $this->p = $p; }
-                    public function get_json_params() { return $this->p; }
-                };
-                $response = Chatbot_Assistant_Provision::handle_provision( $fallback );
-            }
-
-            if ( is_wp_error( $response ) ) {
-                WP_CLI::error( $response->get_error_message() );
-            }
-
-            if ( is_a( $response, 'WP_REST_Response' ) ) {
-                $status = method_exists( $response, 'get_status' ) ? $response->get_status() : 0;
-                $data = method_exists( $response, 'get_data' ) ? $response->get_data() : null;
-                WP_CLI::line( 'Provision finished with HTTP status: ' . $status );
-                if ( $data ) {
-                    WP_CLI::print_value( $data );
+                WP_CLI::warning( 'Provisioning incompleto o con errores.' );
+                WP_CLI::line( '' );
+                $audit = get_option( 'chatbot_provision_audit', array() );
+                if ( ! empty( $audit ) ) {
+                    WP_CLI::line( 'Bitácora de eventos:' );
+                    foreach ( $audit as $entry ) {
+                        $level = strtoupper( $entry['level'] ?? 'info' );
+                        WP_CLI::line( sprintf( '  [%s] %s', $level, $entry['message'] ) );
+                    }
                 }
-            } else {
-                WP_CLI::line( 'Provision completed.' );
             }
+        }
+
+        /**
+         * Muestra el estado actual del provisioning.
+         *
+         * ## EXAMPLES
+         *     wp chatbot status
+         *
+         * @subcommand status
+         */
+        public function status( $args, $assoc_args ) {
+            $store = get_option( 'chatbot_provision', array() );
+
+            if ( empty( $store['tenant_id'] ) ) {
+                WP_CLI::warning( 'Tenant no inicializado aún.' );
+                return;
+            }
+
+            WP_CLI::line( 'Estado del Provisioning:' );
+            WP_CLI::line( '' );
+            WP_CLI::line( sprintf( 'tenant_id: %s', $store['tenant_id'] ) );
+            WP_CLI::line( sprintf( 'current_step: %d', $store['current_step'] ?? 0 ) );
+            WP_CLI::line( sprintf( 'status: %s', $store['status'] ?? 'unknown' ) );
+            WP_CLI::line( sprintf( 'wc_verified: %s', ! empty( $store['wc_verified'] ) ? 'true' : 'false' ) );
+            WP_CLI::line( sprintf( 'wa_verified: %s', ! empty( $store['wa_verified'] ) ? 'true' : 'false' ) );
+            if ( ! empty( $store['phone_number'] ) ) {
+                WP_CLI::line( sprintf( 'wa_phone: %s', $store['phone_number'] ) );
+            }
+        }
+
+        /**
+         * Limpia la bitácora de auditoría.
+         *
+         * ## EXAMPLES
+         *     wp chatbot clear-audit
+         *
+         * @subcommand clear-audit
+         */
+        public function clear_audit( $args, $assoc_args ) {
+            Chatbot_Assistant_Provision::clear_audit_log();
+            WP_CLI::success( 'Bitácora limpiada.' );
         }
     }
 
-    // Register new, clearer command name: `wp mcp request provision`
-    WP_CLI::add_command( 'mcp request', 'Chatbot_Assistant_CLI' );
-    // Keep backward-compatible alias for existing scripts: `wp shopia provision`
+    // Registrar bajo `wp chatbot <subcommand>`
     WP_CLI::add_command( 'chatbot', 'Chatbot_Assistant_CLI' );
 }
