@@ -1,4 +1,4 @@
-/docker-initb.ps1
+/docker-init.ps1
 /docker-compose.yml
 /.env
 /.env.*

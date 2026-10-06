@@ -139,6 +139,9 @@ class Chatbot_Assistant {
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-chatbot-assistant-provision.php';
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-chatbot-assistant-cli.php';
 
+		// Avisos de pedido hacia el Backend (2026-10-05) — ver la clase para el porqué.
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-chatbot-order-events.php';
+
 		// El loader es quien finalmente registra add_action/add_filter en WordPress.
 		$this->loader = new Chatbot_Assistant_Loader();
 
@@ -231,12 +234,43 @@ class Chatbot_Assistant {
 		// mismo link dos veces duplique la cantidad pedida.
 		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_replace_product_qty_before_add', 5 );
 
+		// Compra en un solo link (2026-10-03): `/carrito/{token}` agrega TODOS los
+		// productos de la compra en una sola petición (ver maybe_add_cart_from_link).
+		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_add_cart_from_link', 5 );
+
 		// Prellena el campo de teléfono del checkout con el que el bot ya
 		// tiene cacheado para esta conversación (`billing_phone` en la URL
 		// — ver services/sales.ts en chatbot-backend, Fix #2 de "me mostró
 		// pedidos que no son mios", 2026-09-10) — prioridad 6, no depende
 		// del orden con los hooks de arriba (no toca el carrito).
 		$this->loader->add_action( 'wp_loaded', $plugin_public, 'maybe_prefill_billing_phone', 6 );
+
+		// Apenas existe un pedido, se le avisa al backend para que deje de considerar
+		// pendiente el carrito que venía rastreando de esa conversación (2026-10-05).
+		//
+		// Se enganchan TRES momentos porque ninguno solo alcanza, y la clase se asegura de
+		// avisar una sola vez por pedido (ver NOTIFIED_META), así que sobran sin costo:
+		//
+		//   1. `woocommerce_store_api_checkout_order_processed` — el checkout de BLOQUES
+		//      (Store API), que es el que trae WooCommerce por defecto desde hace varias
+		//      versiones y el que usa esta tienda. OJO: pasa el OBJETO del pedido, no el id
+		//      (los otros dos pasan el id) — `wc_get_order()` acepta los dos, ver
+		//      WC_Order_Factory::get_order_id.
+		//   2. `woocommerce_checkout_order_processed` — el checkout CLÁSICO (shortcode).
+		//      Lo dispara únicamente class-wc-checkout.php; el de bloques NO lo dispara.
+		//   3. `woocommerce_payment_complete` — un pedido que se paga más tarde o por otra vía.
+		//
+		// Por qué los tres, aprendido de un fallo real (2026-10-06, pedido #91): al principio
+		// se engancharon solo el 2 y el 3, razonando que entre "checkout terminado" y "pago
+		// confirmado" quedaba todo cubierto. No quedaba: esta tienda usa el checkout de
+		// bloques (así que el 2 nunca se dispara) y el cliente pagó contra entrega, que no
+		// llama `payment_complete()` sino `update_status()` directo (así que el 3 tampoco).
+		// Resultado: una compra real completada sin que el backend se enterara nunca. La
+		// combinación "checkout de bloques + contra entrega" no es un caso raro — es el
+		// camino por defecto de WooCommerce.
+		$this->loader->add_action( 'woocommerce_store_api_checkout_order_processed', 'Chatbot_Order_Events', 'notify_order_created' );
+		$this->loader->add_action( 'woocommerce_checkout_order_processed', 'Chatbot_Order_Events', 'notify_order_created' );
+		$this->loader->add_action( 'woocommerce_payment_complete', 'Chatbot_Order_Events', 'notify_order_created' );
 
 		// register REST routes for provisioning
 		$this->loader->add_action( 'rest_api_init', 'Chatbot_Assistant_Provision', 'register_routes' );

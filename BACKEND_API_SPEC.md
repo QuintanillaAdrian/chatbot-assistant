@@ -483,6 +483,88 @@ El backend notifica al plugin de cambios de estado vía webhook. El plugin expon
 
 ---
 
+## Avisos del plugin al backend
+
+La dirección contraria a la sección anterior: eventos que el **plugin** le manda al **backend**.
+Misma autenticación que el resto de los endpoints (`Authorization: Bearer {api_key}` en claro).
+
+### POST /webhooks/woocommerce
+
+Avisa que se creó un pedido, para que el backend deje de considerar pendiente el carrito que venía
+rastreando para esa conversación.
+
+**Por qué existe:** el bot arma un link de compra y registra lo que el cliente iba a llevar, pero
+no tiene forma de enterarse de que el pago se completó. Lo averiguaba preguntándole a WooCommerce
+en cada turno, y solo si ese registro ya tenía más de 2 minutos — así que un cliente que pagaba y
+enseguida pedía otro producto recibía un link que le volvía a meter lo ya comprado. Con este aviso,
+WooCommerce habla primero y el registro se borra en el acto.
+
+**Request:**
+
+```json
+{
+  "event": "order_created",
+  "order_id": 91,
+  "phone": "+506 6458-5860",
+  "customer_id": 3,
+  "phone_source": "link"
+}
+```
+
+| Campo | Obligatorio | Para qué |
+|---|---|---|
+| `event` | no | Solo para los logs del backend. Hoy siempre `order_created`. |
+| `order_id` | no | Solo para los logs del backend, para poder rastrear el aviso. |
+| `phone` | **sí** | Identifica la conversación: en WhatsApp el cliente ES su número. Puede ir con `+`, espacios o guiones — el backend lo normaliza a dígitos. Sin este campo no se borra nada. **No es el teléfono de facturación a secas** — ver la nota de abajo. |
+| `customer_id` | no | Confirmación de dueño. Si viene y es mayor que 0, el backend solo borra el carrito si quedó registrado a nombre de ese mismo cliente de WooCommerce. |
+| `phone_source` | no | De dónde salió `phone`: `link` (sellado del token firmado del link del bot — la identidad real de la conversación) o `billing` (el campo del checkout, que el cliente pudo editar). Solo diagnóstico: el backend lo registra en el log y no cambia ninguna decisión. |
+
+**De dónde sale `phone` (importante).** El backend ubica la conversación armando una clave con ese
+número (`tenant_id#whatsapp#<dígitos>`); si no coincide, **no hay plan B** — `customer_id` solo
+sirve para confirmar al dueño, nunca para buscar. Por eso no se manda el teléfono de facturación
+tal cual: el campo del checkout viene precargado con el número correcto pero es **editable**, y lo
+más común es que el cliente lo reescriba sin el código de país (`72587929` en vez de
+`50672587929`). Ahí el pedido se crea y se paga bien, pero el backend seguiría creyendo que ese
+carrito quedó pendiente.
+
+El número correcto viaja **dentro del token firmado** del link, así que el plugin lo conoce con
+certeza al abrirlo: lo guarda en la sesión en ese momento y lo sella como meta del pedido apenas el
+pedido existe (hace falta sellarlo porque `woocommerce_payment_complete` puede correr en otra
+petición, sin sesión). Orden de preferencia:
+
+1. Meta del pedido (`_chatbot_conversation_phone`), si ya se selló.
+2. Sesión, escrita al abrir el link del bot → se copia al pedido en el acto.
+3. Teléfono de facturación — sigue siendo lo correcto para un pedido que **no** vino de un link del bot.
+
+**Respuestas:**
+
+```json
+{ "ok": true, "cleared": true }
+```
+
+| Código | Cuándo |
+|---|---|
+| 200 `{ ok: true, cleared: true }` | Había un carrito pendiente para esa conversación y se borró |
+| 200 `{ ok: true, cleared: false }` | No había nada que borrar, o el carrito era de otro cliente |
+| 200 `{ ok: true, cleared: false, reason: "sin-telefono" }` | El pedido no traía teléfono (reintentar no sirve) |
+| 401 | API Key ausente o inválida |
+
+**Quién lo dispara:** `Chatbot_Order_Events::notify_order_created()`, enganchado a
+`woocommerce_checkout_order_processed` y a `woocommerce_payment_complete`. Se enganchan los dos
+porque, según el medio de pago, uno de ellos puede no dispararse nunca; una marca en el propio
+pedido (`_chatbot_backend_notified`) garantiza un solo aviso. La llamada es **no bloqueante**: el
+cliente que acaba de pagar no espera por ella.
+
+**Si el aviso no llega** (sitio caído, backend inalcanzable, pedido creado a mano desde el panel de
+WordPress) no se pierde nada: el backend sigue verificando por su cuenta en el turno siguiente. Las
+dos capas son deliberadas — esta es el camino rápido, aquella es la garantía.
+
+**Alcance:** solo cubre conversaciones de **WhatsApp**, porque el teléfono del pedido es lo que las
+identifica. En Telegram el cliente se identifica por su id de chat, así que un pedido no alcanza
+para ubicar la conversación; ahí sigue valiendo la verificación del lado del backend.
+
+---
+
 ## Notas de implementación
 
 ### Plugin (PHP)

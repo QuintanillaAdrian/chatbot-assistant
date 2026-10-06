@@ -259,6 +259,25 @@ class Chatbot_Assistant_Public {
 		$phone = sanitize_text_field( wp_unslash( $_GET['billing_phone'] ) );
 		WC()->customer->set_billing_phone( $phone );
 
+		// Además de precargar el campo, se GUARDA el número en la sesión
+		// (2026-10-05). Son dos cosas distintas y por eso no alcanza con lo
+		// de arriba: el campo del checkout es editable, y el aviso de pedido
+		// al backend (Chatbot_Order_Events) usa el teléfono para encontrar la
+		// conversación de WhatsApp — si el cliente lo reescribe (lo más común:
+		// poner el número local sin el código de país), el aviso llega con un
+		// número que no corresponde a ninguna conversación y el carrito
+		// pendiente queda colgado para siempre, como si nunca hubiera
+		// comprado.
+		//
+		// Este número NO es un dato que el cliente escribió: viene dentro del
+		// token firmado del link (ver buildCartLoginToken en services/sales.ts
+		// del backend), así que es la identidad real de la conversación. Se
+		// guarda acá, en el único momento en que se lo conoce con certeza, y
+		// Chatbot_Order_Events lo copia al pedido cuando el pedido existe.
+		if ( WC()->session ) {
+			WC()->session->set( Chatbot_Order_Events::SESSION_PHONE_KEY, $phone );
+		}
+
 	}
 
 	/**
@@ -341,14 +360,40 @@ class Chatbot_Assistant_Public {
 		$hashids = new \Hashids\Hashids( $api_key_hash, 6 );
 		$decoded = $hashids->decode( $token );
 
-		if ( 3 !== count( $decoded ) ) {
+		// Fix (2026-10-03, hallazgo colateral): el token ahora trae un nonce como
+		// cuarto número (ver buildLoginToken en services/sales.ts), así que dos
+		// links del mismo segundo ya no son idénticos. Se aceptan los dos
+		// formatos: 4 números (nuevo, el nonce entra en la firma) y 3 números
+		// (tokens emitidos antes de este cambio, firma sin nonce). Cualquier
+		// otra longitud se rechaza, incluidas las de /ir/ (6 y 7).
+		// Token único de compra (2026-10-04): login + carrito juntos, sin `?next=`.
+		// Ver parse_cart_login_token. Se prueba PRIMERO por ser el formato nuevo; si no
+		// tiene esa forma, se cae a los dos formatos de login de siempre.
+		//
+		// OJO, decisión deliberada: acá NO se agregan los productos al carrito. Eso sigue
+		// pasando en el pedido SIGUIENTE (`/carrito/`). WooCommerce arma la sesión del
+		// carrito al principio de cada request, con la identidad que había ANTES de este
+		// login — agregar los productos acá los escribiría en la sesión de invitado que
+		// este mismo handler está por borrar, y el cliente llegaría al checkout con el
+		// carrito vacío. Lo que se unificó es el TOKEN, no los dos pedidos.
+		$cart_login = $this->parse_cart_login_token( $decoded );
+		if ( $cart_login ) {
+			$wc_customer_id      = $cart_login['wc_customer_id'];
+			$expires_at          = $cart_login['expires_at'];
+			$signature_truncated = $cart_login['signature_truncated'];
+			$signed_message      = $cart_login['signed_message'];
+		} elseif ( 4 === count( $decoded ) ) {
+			list( $wc_customer_id, $expires_at, $signature_truncated, $nonce ) = $decoded;
+			$signed_message = "{$wc_customer_id}:{$expires_at}:{$nonce}";
+		} elseif ( 3 === count( $decoded ) ) {
+			list( $wc_customer_id, $expires_at, $signature_truncated ) = $decoded;
+			$signed_message = "{$wc_customer_id}:{$expires_at}";
+		} else {
 			$this->reject_checkout_link( 'Este link de acceso no es válido.' );
 			return;
 		}
 
-		list( $wc_customer_id, $expires_at, $signature_truncated ) = $decoded;
-
-		$expected_signature           = hash_hmac( 'sha256', "{$wc_customer_id}:{$expires_at}", $api_key_hash );
+		$expected_signature           = hash_hmac( 'sha256', $signed_message, $api_key_hash );
 		$expected_signature_truncated = hexdec( substr( $expected_signature, 0, 10 ) );
 		$valid_signature              = hash_equals( (string) $expected_signature_truncated, (string) $signature_truncated );
 		$expired                      = time() > $expires_at;
@@ -365,80 +410,269 @@ class Chatbot_Assistant_Public {
 		// además cualquier destino sin sentido si `next` viene vacío,
 		// corrupto, o manipulado — se cae a `/checkout/` en ese caso.
 		$next_param = isset( $_GET['next'] ) ? sanitize_text_field( wp_unslash( $_GET['next'] ) ) : '';
-		$safe_next  = preg_match( '#^/ir/[A-Za-z0-9]+(?:\?[A-Za-z0-9%._=&+-]*)?$#', $next_param ) ? $next_param : '/checkout/';
+		// Compra en un solo link (2026-10-03): además de `/ir/` (un producto), el
+		// destino puede ser `/carrito/` (todos los productos de la compra).
+		$safe_next  = preg_match( '#^/(?:ir|carrito)/[A-Za-z0-9]+(?:\?[A-Za-z0-9%._=&+-]*)?$#', $next_param ) ? $next_param : '/checkout/';
 
-		$used_key      = 'chatbot_login_used_' . md5( $token );
-		$already_used  = get_transient( $used_key );
+		// Fix (2026-10-04, medido en Docker con dos navegadores): antes había acá un
+		// transient `chatbot_login_used_{md5(token)}` que marcaba el token como usado
+		// por 10 minutos. Como vive en el SERVIDOR y no en el navegador, el segundo
+		// dispositivo que abría el MISMO link se saltaba todo este bloque: no se
+		// logueaba, y los productos terminaban en un carrito de invitado. O sea, el
+		// pedido salía con customer_id = 0, justo lo que este login existe para evitar
+		// (Fix #3). Ahora cada apertura loguea.
+		//
+		// Lo que ese marcador protegía —no repetir el borrado del carrito— lo cubre el
+		// transient de limpieza de más abajo, que ya es idempotente por lote. La firma
+		// y el vencimiento de 10 minutos siguen siendo la protección real del link.
+		$user = get_user_by( 'id', (int) $wc_customer_id );
+		if ( $user && in_array( 'customer', (array) $user->roles, true ) ) {
+			wp_clear_auth_cookie();
+			wp_set_current_user( $user->ID );
+			wp_set_auth_cookie( $user->ID, false );
 
-		if ( ! $already_used ) {
-			$user = get_user_by( 'id', (int) $wc_customer_id );
-			if ( $user && in_array( 'customer', (array) $user->roles, true ) ) {
-				wp_clear_auth_cookie();
-				wp_set_current_user( $user->ID );
-				wp_set_auth_cookie( $user->ID, false );
+			// Fallo real en vivo (2026-09-10, "de la nada se me cuela un
+			// producto que no tiene nada que ver"): confirmado contra la
+			// base real (Docker) que WooCommerce guarda el carrito de
+			// una cuenta ya logueada en DOS lugares distintos, ninguno
+			// de los dos ligado a la conversación actual del bot:
+			//
+			// 1. `_woocommerce_persistent_cart_{blog_id}` (wp_usermeta)
+			//    — un espejo por cuenta que WooCommerce usa para
+			//    reconstruir el carrito si esa cuenta se loguea en un
+			//    dispositivo/sesión SIN carrito activo.
+			// 2. `wp_woocommerce_sessions`, con `session_key` = el ID
+			//    del cliente (ej. "2") — ESTA es la fuente real y
+			//    autoritativa que WooCommerce lee en cada request de un
+			//    cliente logueado (`WC_Session_Handler::get_customer_id()`
+			//    usa el user ID tal cual como clave), con expiración
+			//    larga (días), no minutos. Confirmado real: borrar SOLO
+			//    la tabla 1 no alcanzaba — el carrito viejo seguía
+			//    apareciendo porque esta fila sobrevivía intacta.
+			//
+			// Cualquiera de las dos, sola, alcanza para que un producto
+			// abandonado hace días (nunca pagado) vuelva solo al carrito
+			// la próxima vez que esa cuenta hace login de verdad — esto
+			// NUNCA pasaba antes de esta pieza (login automático) porque
+			// el checkout siempre era de invitado (`customer_id: 0`, sin
+			// cuenta a la que atarle un carrito persistente). Es un
+			// efecto secundario directo y predecible de loguear de
+			// verdad, no un bug random de WooCommerce.
+			//
+			// Con el checkout híbrido de este bot, cada compra ya llega
+			// con el/los producto(s) exactos que el bot va a agregar
+			// (`/ir/{token}` inmediatamente después, ver `next` arriba)
+			// — cualquier otra cosa que aparezca en el carrito en este
+			// momento es, por definición, un resto de una visita vieja
+			// sin terminar de pagar, no algo que el cliente de ESTA
+			// conversación pidió. Se borran los dos rastros ACÁ, en el
+			// momento exacto del login real, para que la cuenta arranque
+			// sin ningún carrito propio antes de que
+			// `maybe_expand_short_checkout_link` agregue el producto de
+			// esta compra en la request siguiente — `maybe_replace_
+			// product_qty_before_add` (reemplazar_item) solo reemplaza
+			// la línea del producto que se está comprando, nunca tocaba
+			// líneas de OTROS productos, así que no alcanzaba para esto.
+			//
+			// Verificado real (2026-09-10, Docker), las dos capas: con
+			// SOLO el borrado de usermeta, "Mascara" (product_id 12,
+			// resto de una prueba de Fix #3 de hace unas horas) seguía
+			// apareciendo — confirmado que sobrevivía en
+			// `wp_woocommerce_sessions` (`session_key = '2'`). Con las
+			// dos borradas, un login+compra real de punta a punta contra
+			// la tienda Docker terminó con el carrito conteniendo
+			// ÚNICAMENTE el producto de esta compra.
+			//
+			// Fix (2026-10-03, causa raíz de "se borran los productos de la
+			// compra anterior"): una compra de varios productos manda VARIOS
+			// links, y cada uno pasa por este login. Antes, cada login borraba
+			// la sesión, y con ella el carrito que el link anterior acababa de
+			// armar y el marcador `chatbot_last_clear_batch` (ver
+			// maybe_clear_cart_before_add) — así el último link que se abría
+			// dejaba solo su producto. Ahora la limpieza corre UNA sola vez por
+			// lote de compra (`batch`, que es el turno del bot): los links
+			// hermanos de la misma compra la saltean y conservan el carrito.
+			// Sin lote (link viejo, anterior a este cambio), se mantiene el
+			// comportamiento de siempre: limpiar en cada login.
+			// Con el token único el lote ya viene adentro del token; con los links
+			// viejos (dos tokens) hay que sacarlo del destino `next`.
+			$batch = 0;
+			if ( $cart_login ) {
+				$batch = $cart_login['batch_epoch_ms'];
+			} elseif ( preg_match( '#^/ir/([A-Za-z0-9]+)#', $safe_next, $next_matches ) ) {
+				$next_decoded = ( new \Hashids\Hashids( $api_key_hash, 6 ) )->decode( $next_matches[1] );
+				// Mismo orden posicional que maybe_expand_short_checkout_link:
+				// [productId, quantity, expiresAt, limpiarFlag, batchEpochMs, variationId, sig].
+				// Los tokens de 6 números son de editarCarritoPendiente y no tienen lote.
+				$batch = ( 7 === count( $next_decoded ) ) ? (int) $next_decoded[4] : 0;
+			} elseif ( preg_match( '#^/carrito/([A-Za-z0-9]+)#', $safe_next, $cart_matches ) ) {
+				// Token de compra completa (ver maybe_add_cart_from_link):
+				// [expiresAt, limpiarFlag, batchEpochMs, sig, n, ...]. El lote es el 3er número.
+				$cart_decoded = ( new \Hashids\Hashids( $api_key_hash, 6 ) )->decode( $cart_matches[1] );
+				$batch        = ( count( $cart_decoded ) >= 6 ) ? (int) $cart_decoded[2] : 0;
+			}
 
-				// Fallo real en vivo (2026-09-10, "de la nada se me cuela un
-				// producto que no tiene nada que ver"): confirmado contra la
-				// base real (Docker) que WooCommerce guarda el carrito de
-				// una cuenta ya logueada en DOS lugares distintos, ninguno
-				// de los dos ligado a la conversación actual del bot:
-				//
-				// 1. `_woocommerce_persistent_cart_{blog_id}` (wp_usermeta)
-				//    — un espejo por cuenta que WooCommerce usa para
-				//    reconstruir el carrito si esa cuenta se loguea en un
-				//    dispositivo/sesión SIN carrito activo.
-				// 2. `wp_woocommerce_sessions`, con `session_key` = el ID
-				//    del cliente (ej. "2") — ESTA es la fuente real y
-				//    autoritativa que WooCommerce lee en cada request de un
-				//    cliente logueado (`WC_Session_Handler::get_customer_id()`
-				//    usa el user ID tal cual como clave), con expiración
-				//    larga (días), no minutos. Confirmado real: borrar SOLO
-				//    la tabla 1 no alcanzaba — el carrito viejo seguía
-				//    apareciendo porque esta fila sobrevivía intacta.
-				//
-				// Cualquiera de las dos, sola, alcanza para que un producto
-				// abandonado hace días (nunca pagado) vuelva solo al carrito
-				// la próxima vez que esa cuenta hace login de verdad — esto
-				// NUNCA pasaba antes de esta pieza (login automático) porque
-				// el checkout siempre era de invitado (`customer_id: 0`, sin
-				// cuenta a la que atarle un carrito persistente). Es un
-				// efecto secundario directo y predecible de loguear de
-				// verdad, no un bug random de WooCommerce.
-				//
-				// Con el checkout híbrido de este bot, cada compra ya llega
-				// con el/los producto(s) exactos que el bot va a agregar
-				// (`/ir/{token}` inmediatamente después, ver `next` arriba)
-				// — cualquier otra cosa que aparezca en el carrito en este
-				// momento es, por definición, un resto de una visita vieja
-				// sin terminar de pagar, no algo que el cliente de ESTA
-				// conversación pidió. Se borran los dos rastros ACÁ, en el
-				// momento exacto del login real, para que la cuenta arranque
-				// sin ningún carrito propio antes de que
-				// `maybe_expand_short_checkout_link` agregue el producto de
-				// esta compra en la request siguiente — `maybe_replace_
-				// product_qty_before_add` (reemplazar_item) solo reemplaza
-				// la línea del producto que se está comprando, nunca tocaba
-				// líneas de OTROS productos, así que no alcanzaba para esto.
-				//
-				// Verificado real (2026-09-10, Docker), las dos capas: con
-				// SOLO el borrado de usermeta, "Mascara" (product_id 12,
-				// resto de una prueba de Fix #3 de hace unas horas) seguía
-				// apareciendo — confirmado que sobrevivía en
-				// `wp_woocommerce_sessions` (`session_key = '2'`). Con las
-				// dos borradas, un login+compra real de punta a punta contra
-				// la tienda Docker terminó con el carrito conteniendo
-				// ÚNICAMENTE el producto de esta compra.
+			// Sin lote se usa el token como clave (2026-10-04): antes, un link sin
+			// lote se apoyaba en el marcador de "ya usado" para no volver a vaciar
+			// el carrito en cada apertura. Ese marcador ya no existe, así que la
+			// clave cae al token para que la limpieza siga pasando UNA sola vez.
+			$cleanup_key       = 'chatbot_login_cleanup_' . md5( $user->ID . '|' . ( $batch ? $batch : $token ) );
+			$cleaned_for_batch = get_transient( $cleanup_key );
+
+			if ( ! $cleaned_for_batch ) {
 				delete_user_meta( $user->ID, '_woocommerce_persistent_cart_' . get_current_blog_id() );
 				global $wpdb;
 				$wpdb->delete( $wpdb->prefix . 'woocommerce_sessions', array( 'session_key' => (string) $user->ID ) );
 
-				set_transient( $used_key, 1, 10 * MINUTE_IN_SECONDS );
+				// Marca el lote (o el token) como ya limpiado: dos días cubren
+				// cualquier compra en curso (los links de un turno caducan en horas).
+				set_transient( $cleanup_key, 1, 2 * DAY_IN_SECONDS );
 			}
 		}
 
-		wp_safe_redirect( home_url( $safe_next ) );
+		// Con el token único el destino lo arma el código: el MISMO token sirve para la
+		// ruta `/carrito/`, que es la que agrega los productos en el pedido siguiente.
+		// Con los links viejos se respeta el `next` ya validado más arriba.
+		wp_safe_redirect( home_url( $cart_login ? '/carrito/' . $token : $safe_next ) );
 		exit;
 
+	}
+
+	/**
+	 * Compra en un solo link (2026-10-03). Un link `/carrito/{token}` lleva TODOS
+	 * los productos de la compra y los agrega en esta misma petición, dentro de la
+	 * sesión del cliente. Reemplaza al link por producto: cada link abierto en otro
+	 * navegador armaba su propio carrito y reemplazaba al anterior (bug real).
+	 *
+	 * Acepta DOS formatos de token (2026-10-04):
+	 * - Token único de compra (nuevo): lo arma buildCartLoginToken y lleva también el
+	 *   cliente y el nonce del login, porque el link ya no tiene `?next=`. Ver
+	 *   parse_cart_login_token. A esta ruta se llega por el redirect de `/entrar/`.
+	 * - Solo carrito (anterior, sigue vivo para links ya enviados): buildCartToken,
+	 *   [expiresAt, limpiarFlag, batchEpochMs, sigTruncada, phone, n,
+	 *   (productId, quantity, variationId) x n].
+	 * En los dos casos la firma cubre expiración, limpiar, lote, teléfono y cada
+	 * producto, cantidad y variación.
+	 *
+	 * Reglas:
+	 * - limpiar=1 vacía el carrito UNA sola vez por lote (mismo criterio que
+	 *   maybe_clear_cart_before_add, con el mismo marcador de sesión).
+	 * - cada producto reemplaza su propia línea: abrir el link dos veces no duplica.
+	 * - después redirige a /checkout/ conservando billing_phone.
+	 *
+	 * @since 1.3.0
+	 */
+	public function maybe_add_cart_from_link() {
+
+		if ( ! class_exists( '\Hashids\Hashids' ) || ! function_exists( 'WC' ) || ! WC()->cart || ! WC()->session ) {
+			return;
+		}
+
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
+		if ( ! preg_match( '#/carrito/([A-Za-z0-9]+)#', $request_uri, $matches ) ) {
+			return;
+		}
+
+		$store        = get_option( Chatbot_Assistant_Provision::OPTION_KEY, array() );
+		$api_key_hash = $store['api_key_hash'] ?? '';
+		if ( empty( $api_key_hash ) ) {
+			return;
+		}
+
+		$decoded = ( new \Hashids\Hashids( $api_key_hash, 6 ) )->decode( $matches[1] );
+		// Dos formatos vivos a propósito (2026-10-04): el token único de compra
+		// (login + carrito, 8 + 3n números, ver parse_cart_login_token) y el de solo
+		// carrito de antes (6 + 3n). Un link ya enviado tiene que seguir funcionando, así
+		// que el formato viejo no se toca. Acá el login ya ocurrió en el pedido anterior
+		// (`/entrar/`), así que los dos caminos terminan haciendo exactamente lo mismo:
+		// vaciar por lote si corresponde, agregar los productos y mandar al checkout.
+		$cart_login = $this->parse_cart_login_token( $decoded );
+		if ( $cart_login ) {
+			$expires_at          = $cart_login['expires_at'];
+			$limpiar_flag        = $cart_login['limpiar_flag'];
+			$batch_epoch_ms      = $cart_login['batch_epoch_ms'];
+			$signature_truncated = $cart_login['signature_truncated'];
+			$phone_digits        = $cart_login['phone_digits'];
+			$items               = $cart_login['items'];
+			$signed_message      = $cart_login['signed_message'];
+		} else {
+			if ( count( $decoded ) < 6 ) {
+				$this->reject_checkout_link( 'Este link de compra no es válido.' );
+				return;
+			}
+
+			// Los seis primeros números son fijos (el teléfono va en el token desde
+			// 2026-10-03); después vienen 3 por producto.
+			list( $expires_at, $limpiar_flag, $batch_epoch_ms, $signature_truncated, $phone_digits, $count ) = $decoded;
+			if ( count( $decoded ) !== 6 + 3 * $count ) {
+				$this->reject_checkout_link( 'Este link de compra no es válido.' );
+				return;
+			}
+
+			$items           = array();
+			$canonical_parts = array();
+			for ( $i = 0; $i < $count; $i++ ) {
+				$product_id   = (int) $decoded[ 6 + 3 * $i ];
+				$quantity     = (int) $decoded[ 7 + 3 * $i ];
+				$variation_id = (int) $decoded[ 8 + 3 * $i ];
+				$items[]           = array(
+					'product_id'   => $product_id,
+					'quantity'     => $quantity,
+					'variation_id' => $variation_id,
+				);
+				$canonical_parts[] = "{$product_id}:{$quantity}:{$variation_id}";
+			}
+			$canonical = implode( ',', $canonical_parts );
+
+			// Misma forma de firma que buildCartToken en services/sales.ts (prefijo "cart:").
+			$signed_message = "cart:{$expires_at}:{$limpiar_flag}:{$batch_epoch_ms}:{$phone_digits}:{$canonical}";
+		}
+
+		$expected_signature           = hash_hmac( 'sha256', $signed_message, $api_key_hash );
+		$expected_signature_truncated = hexdec( substr( $expected_signature, 0, 10 ) );
+		$valid_signature              = hash_equals( (string) $expected_signature_truncated, (string) $signature_truncated );
+
+		if ( ! $valid_signature || time() > $expires_at ) {
+			$this->reject_checkout_link( 'Este link de compra ya venció.' );
+			return;
+		}
+
+		// Vaciar el carrito una sola vez por lote. Mismo marcador de sesión que
+		// maybe_clear_cart_before_add, así un link de un solo producto y este link
+		// del mismo turno no se pisan entre sí.
+		if ( $limpiar_flag ) {
+			$last_clear_batch = WC()->session->get( 'chatbot_last_clear_batch' );
+			if ( (string) $last_clear_batch !== (string) $batch_epoch_ms ) {
+				WC()->cart->empty_cart();
+				WC()->session->set( 'chatbot_last_clear_batch', (string) $batch_epoch_ms );
+			}
+		}
+
+		foreach ( $items as $item ) {
+			// Reemplaza la línea del mismo producto (o variación), no suma: así abrir
+			// el link dos veces no duplica la cantidad.
+			foreach ( WC()->cart->get_cart() as $cart_item_key => $cart_item ) {
+				$same_product = (int) $cart_item['product_id'] === $item['product_id'];
+				$same_line    = $item['variation_id']
+					? $same_product && (int) $cart_item['variation_id'] === $item['variation_id']
+					: $same_product;
+				if ( $same_line ) {
+					WC()->cart->remove_cart_item( $cart_item_key );
+				}
+			}
+
+			$added = WC()->cart->add_to_cart( $item['product_id'], $item['quantity'], $item['variation_id'] );
+			if ( ! $added ) {
+				// Se sigue con los demás productos; el checkout muestra el carrito real.
+				error_log( "[chatbot-assistant] carrito: no se pudo agregar product_id={$item['product_id']} variation_id={$item['variation_id']}" );
+			}
+		}
+
+		// El teléfono viene FIRMADO en el token (2026-10-03): prellena el checkout sin
+		// un parámetro aparte en la URL. 0 = el bot no lo conocía.
+		$billing_phone_flag = $phone_digits > 0 ? '?billing_phone=' . (int) $phone_digits : '';
+		wp_safe_redirect( home_url( '/checkout/' . $billing_phone_flag ) );
+		exit;
 	}
 
 	/**
@@ -711,6 +945,66 @@ class Chatbot_Assistant_Public {
 	 *
 	 * @since 1.2.0
 	 */
+	/**
+	 * Token único de compra (2026-10-04): un solo token lleva login + carrito.
+	 *
+	 * Antes el link llevaba DOS tokens — el de login en la ruta y el del carrito en
+	 * `?next=%2Fcarrito%2F…` — y eso sumaba 44 caracteres a un link que el cliente
+	 * recibe por WhatsApp. Ahora los dos viajan juntos y el destino lo arma el propio
+	 * handler de `/entrar/`, así que el cliente ve `{sitio}/entrar/{token}` y nada más.
+	 *
+	 * Layout (services/sales.ts, buildCartLoginToken): [wc_customer_id, expires_at,
+	 * limpiar, batch, sigTruncada, nonce, phone, n, (productId, quantity, variationId) x n].
+	 * Son 8 + 3n números, 11 como mínimo. No se confunde con los formatos viejos: el de
+	 * login tiene 3 o 4 números, y el de carrito 6 + 3n (que deja resto 0 al dividir por
+	 * 3, mientras este deja resto 2).
+	 *
+	 * La firma cubre todo junto, incluido A QUÉ CLIENTE entra el link: nadie puede
+	 * agarrar un token y cambiarle la cuenta, el lote, el teléfono ni los productos.
+	 *
+	 * @param array $decoded Números ya decodificados por hashids.
+	 * @return array|false Datos del token, o false si no tiene esta forma.
+	 * @since 1.4.0
+	 */
+	private function parse_cart_login_token( $decoded ) {
+		$total = count( $decoded );
+		if ( $total < 11 || 2 !== $total % 3 ) {
+			return false;
+		}
+
+		list( $wc_customer_id, $expires_at, $limpiar_flag, $batch_epoch_ms, $signature_truncated, $nonce, $phone_digits, $item_count ) = $decoded;
+		if ( $total !== 8 + 3 * (int) $item_count ) {
+			return false;
+		}
+
+		$items           = array();
+		$canonical_parts = array();
+		for ( $i = 0; $i < (int) $item_count; $i++ ) {
+			$product_id   = (int) $decoded[ 8 + 3 * $i ];
+			$quantity     = (int) $decoded[ 9 + 3 * $i ];
+			$variation_id = (int) $decoded[ 10 + 3 * $i ];
+
+			$items[]           = array(
+				'product_id'   => $product_id,
+				'quantity'     => $quantity,
+				'variation_id' => $variation_id,
+			);
+			$canonical_parts[] = "{$product_id}:{$quantity}:{$variation_id}";
+		}
+		$canonical = implode( ',', $canonical_parts );
+
+		return array(
+			'wc_customer_id'      => (int) $wc_customer_id,
+			'expires_at'          => (int) $expires_at,
+			'limpiar_flag'        => (int) $limpiar_flag,
+			'batch_epoch_ms'      => (int) $batch_epoch_ms,
+			'signature_truncated' => $signature_truncated,
+			'phone_digits'        => (int) $phone_digits,
+			'items'               => $items,
+			'signed_message'      => "cartlogin:{$wc_customer_id}:{$expires_at}:{$limpiar_flag}:{$batch_epoch_ms}:{$nonce}:{$phone_digits}:{$canonical}",
+		);
+	}
+
 	private function reject_checkout_link( $reason ) {
 
 		unset( $_GET['add-to-cart'], $_GET['quantity'], $_GET['reemplazar_item'], $_GET['limpiar_carrito'], $_GET['variation_id'], $_GET['exp'], $_GET['sig'] );
