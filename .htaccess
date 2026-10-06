@@ -1,0 +1,19 @@
+# Bloquea el acceso web a lo que vive en la carpeta del plugin pero no es parte del plugin publicado
+# (2026-10-05, auditoría de seguridad: ítem S1 de PLAN_DE_CORRECCIONES.md en chatbot-backend).
+#
+# La carpeta del plugin se sirve tal cual: en la tienda de prueba, Docker la monta dentro de la raíz
+# web y ngrok la publica. Antes de este archivo se podían descargar desde internet el repo entero
+# (.git, con todo su historial), el .env de Docker, la configuración local de Claude Code (.claude)
+# y los scripts de desarrollo (docker-init.ps1, docker-compose.yml).
+#
+# Se responde 404 y no 403 a propósito: 403 confirma que el archivo existe.
+#
+# Solo aplica en servidores Apache que permitan .htaccess (como la imagen oficial de WordPress que
+# usa la tienda de prueba). En Nginx no tiene efecto: ahí estos archivos no tienen que llegar a la
+# carpeta publicada (ver L7 en el plan).
+<IfModule mod_alias.c>
+	# Cualquier ruta con un tramo que empiece con punto: .git/, .env, .gitignore, .claude/ ...
+	RedirectMatch 404 /\.
+	# Scripts y configuración de desarrollo.
+	RedirectMatch 404 \.(ps1|ya?ml)$
+</IfModule>
