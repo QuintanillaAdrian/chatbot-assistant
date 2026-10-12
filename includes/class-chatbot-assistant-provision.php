@@ -5,9 +5,11 @@
  * Gestiona el flujo completo de onboarding (Pasos 1-5):
  * - Paso 1: Registra tenant en el Backend
  * - Paso 2: Valida y envia credenciales de WooCommerce
- * - Paso 3: Setup de WhatsApp via OAuth Meta
+ * - Paso 3: Canal — WhatsApp (conexión directa u OAuth de Meta) o Telegram
  * - Paso 4: Personaliza el bot (nombre, mensaje, system_prompt)
  * - Paso 5: Activa el tenant
+ *
+ * Los pasos 1 y 2 corren solos (maybe_run_pending_provision); del 3 al 5 los dispara el wizard.
  *
  * Toda comunicacion con servicios externos ocurre via Backend Node.js
  * usando Chatbot_Assistant_Backend_Client. El plugin nunca llama al MCP directamente.
@@ -20,27 +22,17 @@ class Chatbot_Assistant_Provision {
 
     const OPTION_KEY = 'chatbot_provision';
     const AUDIT_OPTION_KEY = 'chatbot_provision_audit';
-    const SECRET_CIPHER = 'AES-256-CBC';
     const AUDIT_LIMIT = 10;
     const WC_RETRY_BASE_SECONDS = 30;
     const WC_RETRY_MAX_SECONDS = 300;
 
     /**
-     * Register REST routes.
-     *
-     * The plugin exposes a POST /chatbot/v1/provision endpoint as a manual
-     * entry point for UI-triggered provisioning or for remote callers. The
-     * automatic activation flow calls the same handler in-process, so the
-     * endpoint is optional for automation but useful as a fallback.
+     * Registra las rutas REST del plugin (chatbot/v1): las del wizard (solo admin) y las que llama
+     * el Backend (con su Bearer). Los pasos 1 y 2 no tienen ruta: corren en el mismo proceso, desde
+     * maybe_run_pending_provision. Hasta el 2026-10-08 existía POST /tenant/register, anónima y sin
+     * uso, que devolvía la API key (S6 en PLAN_DE_CORRECCIONES.md del Backend): se quitó.
      */
     public static function register_routes() {
-        // PASO 1: Register tenant (generar API key)
-        register_rest_route( 'chatbot/v1', '/tenant/register', array(
-            'methods' => 'POST',
-            'callback' => array( __CLASS__, 'handle_register_tenant' ),
-            'permission_callback' => '__return_true', // Puede ser anónimo (primera vez)
-        ) );
-
         // PASO 3B: Meta OAuth callback
         register_rest_route( 'chatbot/v1', '/webhook/meta-oauth', array(
             'methods' => 'POST',
@@ -59,6 +51,13 @@ class Chatbot_Assistant_Provision {
         register_rest_route( 'chatbot/v1', '/wa/signup-url', array(
             'methods' => 'GET',
             'callback' => array( __CLASS__, 'handle_wa_signup_url' ),
+            'permission_callback' => array( __CLASS__, 'provision_permission_check' ),
+        ) );
+
+        // PASO 3 sin OAuth: conexión directa de WhatsApp (convive con signup-url)
+        register_rest_route( 'chatbot/v1', '/wa/connect-direct', array(
+            'methods' => 'POST',
+            'callback' => array( __CLASS__, 'handle_wa_connect_direct' ),
             'permission_callback' => array( __CLASS__, 'provision_permission_check' ),
         ) );
 
@@ -142,47 +141,6 @@ class Chatbot_Assistant_Provision {
     }
 
     /**
-     * PASO 1: Handle tenant registration request.
-     * Genera o recupera la API key y devuelve tenant_id.
-     */
-    public static function handle_register_tenant( $request ) {
-        // Generar API key si no existe
-        $api_key = get_option( 'chatbot_api_key_plain', '' );
-        if ( empty( $api_key ) ) {
-            $api_key = wp_generate_uuid4();
-            update_option( 'chatbot_api_key_plain', $api_key, false );
-        }
-
-        // Registrar en Backend
-        $result = Chatbot_Assistant_Backend_Client::register_tenant( $api_key );
-
-        if ( ! $result['success'] ) {
-            return new WP_REST_Response( array(
-                'error'   => $result['error'],
-                'code'    => $result['code'],
-            ), $result['code'] );
-        }
-
-        // Guardar en opciones locales
-        $store = get_option( self::OPTION_KEY, array() );
-        $store['tenant_id']   = $result['tenant_id'];
-        $store['state_token'] = $result['state_token'];
-        $store['status']      = $result['status'];
-        $store['current_step'] = 1;
-        update_option( self::OPTION_KEY, $store, false );
-
-        self::log_event( 'info', 'Tenant registered via REST endpoint', array( 'tenant_id' => $result['tenant_id'] ) );
-
-        return new WP_REST_Response( array(
-            'success'      => true,
-            'tenant_id'    => $result['tenant_id'],
-            'api_key'      => $api_key,
-            'state_token'  => $result['state_token'],
-            'status'       => $result['status'],
-        ), 201 );
-    }
-
-    /**
      * PASO 3B: Handle Meta OAuth callback.
      * Recibe oauth_code y state_token desde Meta redirect.
      */
@@ -221,7 +179,7 @@ class Chatbot_Assistant_Provision {
         // Actualizar estado local
         $store['phone_number']  = $result['phone_number'];
         $store['wa_verified']   = true;
-        $store['current_step']  = 3;
+        $store['current_step']  = self::advanced_step( $store, 3 );
         update_option( self::OPTION_KEY, $store, false );
 
         self::log_event( 'info', 'WhatsApp setup completed', array( 'phone' => $result['phone_number'] ) );
@@ -312,7 +270,8 @@ class Chatbot_Assistant_Provision {
 
         $store = get_option( self::OPTION_KEY, array() );
 
-        // Si no hay API key temporal, generarla (usada solo durante Pasos 1-2)
+        // Si todavía no hay API key, generarla. Es la credencial de la tienda ante el Backend
+        // (Bearer en todos los requests, también después del onboarding).
         if ( empty( get_option( 'chatbot_api_key_plain', '' ) ) ) {
             $api_key = wp_generate_uuid4();
             update_option( 'chatbot_api_key_plain', $api_key, false );
@@ -406,13 +365,13 @@ class Chatbot_Assistant_Provision {
                 return;
             }
 
-            // Guardar credenciales encriptadas
-            $store['consumerKey']              = $wc_keys['key'];
-            $store['consumerSecret_encrypted'] = self::encrypt_secret( $wc_keys['secret'] );
-            $store['consumerSecret_last4']     = substr( $wc_keys['secret'], -4 );
-            $store['wc_verified']              = true;
-            $store['current_step']             = 2;
-            $store['wc_attempt_count']         = 0;
+            // Solo la consumer key (para poder borrar la clave al reintentar o al desinstalar). El
+            // secreto no se copia: WooCommerce ya lo guarda en su tabla y el Backend, cifrado. Hasta
+            // el 2026-10-08 se guardaba además una copia cifrada que nada leía nunca.
+            $store['consumerKey']      = $wc_keys['key'];
+            $store['wc_verified']      = true;
+            $store['current_step']     = self::advanced_step( $store, 2 );
+            $store['wc_attempt_count'] = 0;
             update_option( self::OPTION_KEY, $store, false );
             // No borramos chatbot_api_key_plain: el Backend espera el Bearer en texto
             // plano en TODOS los requests posteriores (Pasos 3-5, reconexiones, status).
@@ -584,6 +543,55 @@ class Chatbot_Assistant_Provision {
     }
 
     /**
+     * PASO 3 sin OAuth: conexión directa de WhatsApp (2026-10-08).
+     * El admin pega los tres datos del panel de Meta; el Backend los verifica contra Meta, rechaza un
+     * número que ya es de otra tienda, suscribe el webhook y guarda el token cifrado. Acá no se
+     * guarda el token: solo el resultado (número y wa_verified), igual que el flujo OAuth.
+     */
+    public static function handle_wa_connect_direct( $request ) {
+        $params          = $request->get_json_params();
+        $phone_number_id = sanitize_text_field( $params['phone_number_id'] ?? '' );
+        $waba_id         = sanitize_text_field( $params['waba_id'] ?? '' );
+        $access_token    = sanitize_text_field( $params['access_token'] ?? '' );
+
+        if ( empty( $phone_number_id ) || empty( $waba_id ) || empty( $access_token ) ) {
+            return new WP_REST_Response( array(
+                'error' => 'Faltan datos: Phone number ID, WhatsApp Business Account ID y token de acceso',
+            ), 400 );
+        }
+
+        $store = get_option( self::OPTION_KEY, array() );
+        if ( empty( $store['tenant_id'] ) ) {
+            return new WP_REST_Response( array(
+                'error' => 'Tenant not registered',
+            ), 400 );
+        }
+
+        $result = Chatbot_Assistant_Backend_Client::connect_wa_direct( $store['tenant_id'], $phone_number_id, $waba_id, $access_token );
+
+        if ( ! $result['success'] ) {
+            self::log_event( 'error', 'WhatsApp (conexión directa) fallido: ' . $result['error'], array( 'code' => $result['code'] ) );
+            return new WP_REST_Response( array(
+                'error'   => $result['error'],
+                'code'    => $result['code'],
+            ), $result['code'] ? $result['code'] : 500 );
+        }
+
+        // Mismo criterio que Telegram y que el OAuth: el paso 3 se da por completo con un canal.
+        $store['phone_number'] = $result['phone_number'];
+        $store['wa_verified']  = true;
+        $store['current_step'] = self::advanced_step( $store, 3 );
+        update_option( self::OPTION_KEY, $store, false );
+
+        self::log_event( 'success', 'WhatsApp conectado (conexión directa)', array( 'phone' => $result['phone_number'] ) );
+
+        return new WP_REST_Response( array(
+            'success' => true,
+            'phone'   => $result['phone_number'],
+        ), 200 );
+    }
+
+    /**
      * PASO 3 (canal alternativo): Handle Telegram bot connection.
      * A diferencia de WhatsApp no hay redirect/callback — el Backend valida
      * el token y registra el webhook en un solo round-trip síncrono.
@@ -619,7 +627,7 @@ class Chatbot_Assistant_Provision {
         // por completo con cualquiera de los dos, no con ambos.
         $store['telegram_verified']    = true;
         $store['telegram_bot_username'] = $result['bot_username'];
-        $store['current_step']         = max( (int) ( $store['current_step'] ?? 0 ), 3 );
+        $store['current_step']         = self::advanced_step( $store, 3 );
         update_option( self::OPTION_KEY, $store, false );
 
         self::log_event( 'success', 'Telegram conectado', array( 'bot_username' => $result['bot_username'] ) );
@@ -679,7 +687,7 @@ class Chatbot_Assistant_Provision {
         $store['bot_name']        = $bot_name;
         $store['welcome_message'] = $welcome_message;
         $store['system_prompt']   = $system_prompt;
-        $store['current_step']    = 4;
+        $store['current_step']    = self::advanced_step( $store, 4 );
         update_option( self::OPTION_KEY, $store, false );
 
         self::log_event( 'success', 'Paso 4: Bot configuration saved', array(
@@ -688,7 +696,7 @@ class Chatbot_Assistant_Provision {
 
         return new WP_REST_Response( array(
             'success'          => true,
-            'current_step'     => 4,
+            'current_step'     => $store['current_step'],
         ), 200 );
     }
 
@@ -840,47 +848,10 @@ class Chatbot_Assistant_Provision {
     }
 
     /**
-     * Cifra un secreto usando AES-256-CBC con IV aleatorio por operacion.
-     * El IV (16 bytes) se prefija al ciphertext antes de codificar en base64.
+     * Crea un par de credenciales WooCommerce directamente en la tabla `woocommerce_api_keys`
+     * (no dependemos del controlador REST de WooCommerce).
      */
-    public static function encrypt_secret( $secret ) {
-        $key    = hash( 'sha256', wp_salt( 'auth' ), true );
-        $iv     = random_bytes( 16 );
-        $cipher = openssl_encrypt( $secret, self::SECRET_CIPHER, $key, OPENSSL_RAW_DATA, $iv );
-        return base64_encode( $iv . $cipher );
-    }
-
-    /**
-     * Descifra un secreto previamente cifrado con encrypt_secret().
-     * Extrae el IV de los primeros 16 bytes del payload decodificado.
-     */
-    public static function decrypt_secret( $encrypted ) {
-        if ( empty( $encrypted ) ) {
-            return '';
-        }
-        $key    = hash( 'sha256', wp_salt( 'auth' ), true );
-        $raw    = base64_decode( $encrypted );
-        $iv     = substr( $raw, 0, 16 );
-        $cipher = substr( $raw, 16 );
-        return openssl_decrypt( $cipher, self::SECRET_CIPHER, $key, OPENSSL_RAW_DATA, $iv );
-    }
-
-    /**
-     * Descifra el secreto previamente cifrado con `encrypt_secret`.
-     */
-
     public static function generate_wc_keys() {
-        // Usamos la inserción directa en la BD como mecanismo primario
-        // para generar claves de WooCommerce.
-        return self::generate_wc_keys_direct();
-    }
-
-    /**
-     * Crea un par de credenciales WooCommerce directamente en la tabla interna.
-     * Este método es ahora el flujo primario para generar claves y persitirlas
-     * en la tabla `woocommerce_api_keys` (no dependemos del controlador REST).
-     */
-    public static function generate_wc_keys_direct() {
         global $wpdb;
 
         $user = get_user_by( 'login', 'admin' );
@@ -909,11 +880,7 @@ class Chatbot_Assistant_Provision {
                 $consumer_secret = 'cs_' . bin2hex( random_bytes( 20 ) );
             }
 
-            if ( function_exists( 'wc_api_hash' ) ) {
-                $db_consumer_key = wc_api_hash( $consumer_key );
-            } else {
-                $db_consumer_key = hash_hmac( 'sha256', $consumer_key, 'wc-api' );
-            }
+            $db_consumer_key = self::wc_db_consumer_key( $consumer_key );
 
             $truncated_key = substr( $consumer_key, -7 );
 
@@ -948,9 +915,28 @@ class Chatbot_Assistant_Provision {
     }
 
     /**
+     * La consumer key tal como WooCommerce la guarda en `woocommerce_api_keys` (hasheada).
+     */
+    private static function wc_db_consumer_key( $consumer_key ) {
+        return function_exists( 'wc_api_hash' )
+            ? wc_api_hash( $consumer_key )
+            : hash_hmac( 'sha256', $consumer_key, 'wc-api' );
+    }
+
+    /**
+     * El paso del onboarding solo avanza: reconectar un canal, revalidar WooCommerce o guardar la
+     * configuración con el bot ya activo no lo baja. Hasta el 2026-10-10 varios pasos se guardaban
+     * con un número fijo y el panel quedaba en 4 con el bot activo hasta recargarlo (M4 en
+     * PLAN_DE_CORRECCIONES.md del Backend).
+     */
+    private static function advanced_step( $store, $step ) {
+        return max( (int) ( $store['current_step'] ?? 0 ), $step );
+    }
+
+    /**
      * Elimina de `woocommerce_api_keys` la fila correspondiente a una consumer key.
      * Se usa para limpiar claves huérfanas de intentos de provisioning fallidos
-     * antes de generar un par nuevo.
+     * antes de generar un par nuevo, y al desinstalar el plugin (uninstall.php).
      */
     public static function delete_wc_key( $consumer_key ) {
         global $wpdb;
@@ -959,15 +945,9 @@ class Chatbot_Assistant_Provision {
             return;
         }
 
-        if ( function_exists( 'wc_api_hash' ) ) {
-            $db_consumer_key = wc_api_hash( $consumer_key );
-        } else {
-            $db_consumer_key = hash_hmac( 'sha256', $consumer_key, 'wc-api' );
-        }
-
         $wpdb->delete(
             $wpdb->prefix . 'woocommerce_api_keys',
-            array( 'consumer_key' => $db_consumer_key ),
+            array( 'consumer_key' => self::wc_db_consumer_key( $consumer_key ) ),
             array( '%s' )
         );
     }

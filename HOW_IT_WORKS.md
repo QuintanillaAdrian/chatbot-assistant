@@ -1,189 +1,344 @@
-# Chatbot Assistant — Cómo funciona y cómo probarlo
+# Chatbot Assistant — Guía de instalación y funcionamiento
 
-## Arquitectura general
+Plugin de WordPress que conecta una tienda **WooCommerce** con un asistente de ventas por
+**WhatsApp** (o Telegram). El cliente le escribe al bot, el bot consulta el catálogo real de la
+tienda, arma links de compra, revisa pedidos y los puede cancelar.
 
-```
-WordPress Plugin
-      │
-      ├── Pasos 1-2 (automático al activar)
-      │         └──► Backend Node.js (api.chatbot.io)
-      │                     └──► MCP / WooCommerce
-      │
-      └── Pasos 3-5 (manual desde panel admin)
-                └──► Backend Node.js
-                           └──► Meta (WhatsApp)
-```
-
-El plugin nunca habla directamente con WhatsApp ni con el MCP. Todo pasa por el Backend de Shopia.
+> **Para quién es esta guía:** para quien instala el plugin en su propio WordPress. Si seguís los
+> pasos en orden, el registro de la tienda y la conexión con WooCommerce se hacen solos; WhatsApp,
+> la personalización y la activación se terminan desde el panel del plugin.
 
 ---
 
-## Flujo de los 5 pasos
+## 1. Cómo encaja todo
 
-### Paso 1 — Registro de tenant *(automático)*
+```
+ Cliente (WhatsApp)                                  Backend del chatbot (AWS)
+        │                                         ┌──────────────────────────────┐
+        └──────────────► Meta ──────────────────► │ API Gateway + Lambdas        │
+                                                  │ - recibe mensajes            │
+                                                  │ - IA que redacta respuestas  │
+                                                  │ - lee la tienda vía API WC   │
+                                                  └──────────────┬───────────────┘
+                                                                 │ HTTPS
+                                                                 ▼
+ ┌──────────────────────── Servidor de la tienda ─────────────────────────────┐
+ │  NGINX (HTTPS, proxy inverso)                                              │
+ │     │  reenvía con X-Forwarded-Proto: https                                │
+ │     ▼                                                                      │
+ │  Contenedor Docker: WordPress + WooCommerce + este plugin                  │
+ │     - registra la tienda en el Backend (onboarding)                        │
+ │     - genera las claves de la API de WooCommerce para el Backend           │
+ │     - atiende los links de compra (/entrar/…, /carrito/…, /ir/…)           │
+ │     - avisa al Backend cuando se crea un pedido                            │
+ └────────────────────────────────────────────────────────────────────────────┘
+```
 
-- Se dispara desde wp-admin o WP-CLI (`init` hook via `maybe_run_pending_provision`, restringido a `is_admin()`/WP-CLI para no correr en cada visita del front-end)
-- Genera un UUID como API key temporal y lo guarda en `chatbot_api_key_plain`
-- Llama `POST /tenants` en el Backend → recibe `tenant_id` + `state_token`
-- Guarda `tenant_id`, `api_key_hash`, `state_token` en `wp_options` (clave `chatbot_provision`)
+Tres ideas para entender el resto:
 
-### Paso 2 — Validación de WooCommerce *(automático, mismo request que Paso 1)*
-
-- Genera un par `consumer_key / consumer_secret` nuevo directamente en `wp_woocommerce_api_keys`
-- Reintentos con backoff exponencial (30s–5min) si falla, para evitar ráfagas
-- Llama `POST /tenants/{id}/wc/validate` → Backend verifica la conexión WC
-- `chatbot_api_key_plain` se conserva (no se borra): el Backend exige el Bearer en texto plano en todos los requests posteriores (Pasos 3-5, reconexiones, `/status`)
-- `current_step` avanza a `2`
-
-### Paso 3 — WhatsApp *(manual, desde el wizard)*
-
-- Usuario hace clic en "Conectar WhatsApp"
-- Plugin llama `GET /wa/signup-url` → Backend devuelve URL de Meta OAuth
-- El navegador redirige al usuario a Meta para autorizar
-- Meta redirige de vuelta a `/wp-json/chatbot/v1/webhook/meta-oauth` con `oauth_code`
-- El plugin intercambia el code → `wa_verified = true`, se guarda el número de teléfono
-- `current_step` avanza a `3`
-
-### Paso 4 — Personalización *(manual)*
-
-- Usuario llena `bot_name`, `welcome_message`, `system_prompt` en el formulario
-- Plugin llama `PATCH /config` → Backend guarda la configuración
-- Los valores se persisten también en `chatbot_provision` (wp_options)
-- `current_step` avanza a `4`
-
-### Paso 5 — Activación *(manual)*
-
-- Solo disponible si `wc_verified = true` Y `wa_verified = true`
-- Plugin llama `POST /activate` → Backend activa el bot
-- `status` cambia a `active`, `current_step = 5`
+1. **El plugin nunca habla con WhatsApp ni con la IA.** Todo pasa por el Backend.
+2. **El Backend sí entra a la tienda** (por la API de WooCommerce y por rutas propias del plugin).
+   Por eso la tienda tiene que ser **accesible desde internet con HTTPS**.
+3. **La tienda se identifica por su dirección pública** (la que WordPress tiene como "Dirección del
+   sitio"). Esa dirección es la que el Backend usa para todo: consultar productos y armar los links
+   que recibe el cliente. Si WordPress cree que es `http://…` o `localhost`, nada funciona.
 
 ---
 
-## Estado esperado en la BD tras instalación exitosa
+## 2. Antes de instalar — checklist
 
-Opción `chatbot_provision` en `wp_options`:
+| # | Requisito | Por qué | Cómo se verifica |
+|---|---|---|---|
+| 1 | WooCommerce instalado y **activo** | El plugin genera claves de su API | wp-admin → Plugins |
+| 2 | Un usuario **administrador** | Las claves de WooCommerce se crean a su nombre | wp-admin → Usuarios |
+| 3 | Dominio público con **HTTPS** | El Backend entra a la tienda desde AWS; WooCommerce rechaza sus claves si la petición no es HTTPS | Abrir `https://tu-dominio/wp-json/` desde fuera del servidor |
+| 4 | WordPress sabe que está en **HTTPS** (detrás de NGINX) | Ver [sección 4](#4-https-detrás-de-nginx) | wp-admin → Ajustes → Generales muestra `https://tu-dominio` |
+| 5 | **Enlaces permanentes** distintos de "Simple" | Las rutas `/wp-json/...` no existen con "Simple" | wp-admin → Ajustes → Enlaces permanentes |
+| 6 | Variable de entorno **`CHATBOT_BACKEND_URL`** en el contenedor | El plugin la lee para saber dónde está el Backend | [sección 3.2](#32-configurar-la-dirección-del-backend) |
+| 7 | La carpeta **`vendor/`** dentro del plugin | Sin ella **ningún link de compra funciona** | [sección 3.1](#31-conseguir-el-plugin-completo) |
 
-```json
-{
-  "tenant_id": "uuid-generado",
-  "state_token": "token-del-backend",
-  "api_key_hash": "sha256-hash",
-  "status": "pending",
-  "current_step": 2,
-  "wc_verified": true,
-  "wa_verified": false,
-  "consumerKey": "ck_xxx",
-  "consumerSecret_encrypted": "base64...",
-  "consumerSecret_last4": "xxxx"
+---
+
+## 3. Instalación paso a paso
+
+### 3.1 Conseguir el plugin completo
+
+El plugin usa una librería de Composer (`hashids`) para los links de compra (`/entrar/…`, `/carrito/…` y `/ir/…`).
+Esa librería vive en `vendor/`, que **no está en el repositorio de Git**.
+
+- **Opción A (recomendada):** pedile a Adrian el ZIP del plugin, que ya trae `vendor/`.
+- **Opción B:** si clonaste el repositorio, dentro de la carpeta del plugin corré:
+
+  ```bash
+  composer install --no-dev
+  ```
+
+> ⚠️ Sin `vendor/` el plugin se activa y el onboarding funciona igual, pero los links que manda el
+> bot **no hacen nada** al abrirlos, sin ningún error visible. Es el fallo más difícil de notar.
+
+### 3.2 Configurar la dirección del Backend
+
+El plugin lee la dirección del Backend **solo** de la variable de entorno `CHATBOT_BACKEND_URL`
+(no hay valor por defecto, a propósito). Va **sin** `/api` al final; si se lo ponés, igual funciona.
+El valor real te lo pasa Adrian.
+
+En el `docker-compose.yml` de WordPress:
+
+```yaml
+services:
+  wordpress:
+    image: wordpress:6.9.1-php8.2-apache
+    environment:
+      CHATBOT_BACKEND_URL: https://<id>.execute-api.us-east-2.amazonaws.com/prod
+      # ... el resto de tus variables
+```
+
+O con `docker run`: `-e CHATBOT_BACKEND_URL=https://...`
+
+> Si falta, el onboarding **no avanza y no muestra error en pantalla**; solo queda en el log de PHP
+> la línea `Falta configurar la variable de entorno CHATBOT_BACKEND_URL`.
+
+### 3.3 Instalar y activar
+
+1. Copiá la carpeta `chatbot-assistant` a `wp-content/plugins/` (o subí el ZIP desde wp-admin →
+   Plugins → Añadir nuevo → Subir plugin).
+2. Activá el plugin.
+3. **Entrá a cualquier pantalla de wp-admin.** Ahí arranca solo el onboarding (pasos 1 y 2). Activar
+   el plugin no alcanza: el disparo ocurre al cargar una página de administración.
+4. Abrí **wp-admin → Asistente Chatbot** y verificá que el progreso esté en el paso 2 completo.
+
+---
+
+## 4. HTTPS detrás de NGINX
+
+Con NGINX adelante, el contenedor recibe todo por HTTP aunque el cliente haya entrado por HTTPS.
+Si WordPress no se entera, pasan tres cosas:
+
+- el plugin registra la tienda en el Backend con una dirección `http://`;
+- WooCommerce **rechaza las claves de su API** cuando la petición llega por HTTP (exige HTTPS para
+  autenticación básica) → el paso 2 falla;
+- los links de compra salen con `http://`.
+
+Se resuelve en dos partes.
+
+### 4.1 NGINX: avisar que la conexión original era HTTPS
+
+```nginx
+location / {
+    proxy_pass         http://127.0.0.1:8080;   # puerto del contenedor
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   Authorization     $http_authorization;
 }
 ```
 
+La imagen oficial `wordpress` de Docker ya trae en su `wp-config.php` el bloque que lee
+`X-Forwarded-Proto` y marca la petición como HTTPS; con que NGINX mande el encabezado, alcanza. El
+`Authorization` tiene que llegar intacto: el Backend lo usa para autenticarse contra las rutas del
+plugin.
+
+### 4.2 WordPress: la dirección del sitio con HTTPS, desde una variable de entorno
+
+El plugin usa la dirección que tiene WordPress (`home`). Para fijarla desde el entorno, sin tocarla
+a mano en la base:
+
+```yaml
+services:
+  wordpress:
+    environment:
+      SITE_URL: https://tu-dominio.com
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME',    getenv('SITE_URL'));
+        define('WP_SITEURL', getenv('SITE_URL'));
+```
+
+`WORDPRESS_CONFIG_EXTRA` lo inserta la imagen oficial dentro de `wp-config.php`. Con `WP_HOME` y
+`WP_SITEURL` definidos, la dirección queda fija (wp-admin la muestra gris, no editable).
+
+> ⚠️ Las variables `WORDPRESS_HOME` / `WORDPRESS_SITE_URL` **no las usa** la imagen oficial: ponerlas
+> en el compose no cambia nada. Hace falta `WP_HOME`/`WP_SITEURL` como arriba.
+>
+> ℹ️ Esta es la forma correcta: la dirección sale de WordPress, se configura una sola vez y la usan
+> WordPress, WooCommerce y el plugin por igual. La alternativa que usa el equipo hoy está en 4.3.
+
+### 4.3 Alternativa en uso: el plugin lee la dirección de una variable de entorno ⚠️ deuda técnica
+
+Es la forma que usa el equipo hoy para la migración (decisión del 2026-10-08): la dirección pública
+con HTTPS se pone en una variable de entorno del contenedor y **el plugin** la lee para informársela
+al Backend, en lugar de configurarla en WordPress como en 4.2. Ya se hizo así en mayo con la variable
+`SITE_DOMAIN`; esa lectura se quitó después, y la versión actual del plugin usa solo la dirección de
+WordPress (`get_home_url()`). Se vuelve a agregar para la migración.
+
+Funciona para registrar la tienda, pero **no es la forma correcta** y está anotada para corregirse
+(ítem L9 de `PLAN_DE_CORRECCIONES.md` en el repositorio del Backend):
+
+- **Quedan dos direcciones para la misma tienda.** El plugin le dice al Backend la de la variable,
+  pero WordPress y WooCommerce siguen usando la suya para todo lo demás: redirecciones, la página de
+  pago, las cookies de sesión y la API. Si no son idénticas, el cliente abre el link por un dominio y
+  WooCommerce lo manda o le arma la sesión en otro: llega sin sesión o con el carrito vacío.
+- **La API de WooCommerce sigue dependiendo de que WordPress sepa que está en HTTPS** (4.1). La
+  variable no lo arregla: si falta `X-Forwarded-Proto`, el paso 2 falla igual.
+- **El Backend guarda la dirección una sola vez**, al registrar la tienda. Cambiar la variable después
+  no la actualiza.
+
+Si se usa esta alternativa, la variable tiene que ser **exactamente** la misma dirección que WordPress
+muestra en Ajustes → Generales (mismo `https://`, mismo dominio, sin `/` final).
+
+La corrección futura es volver a una sola fuente: la de WordPress (4.2), con la variable de entorno
+alimentando `WP_HOME`/`WP_SITEURL` en vez de leerse desde el plugin.
+
+**Cómo verificar:** wp-admin → Ajustes → Generales muestra `https://tu-dominio.com` en "Dirección de
+WordPress" y "Dirección del sitio". Desde fuera del servidor, `https://tu-dominio.com/wp-json/wc/v3`
+responde 200 con la lista de rutas de WooCommerce, y `.../wp-json/wc/v3/products` responde 401 (existe
+y pide credenciales, que es lo esperado).
+
 ---
 
-## Cómo probarlo
+## 5. El onboarding: los 5 pasos
 
-### Requisitos previos
+| Paso | Qué pasa | ¿Automático? |
+|---|---|---|
+| **1. Registro** | El plugin genera una API key, registra la tienda en el Backend (`POST /tenants`) con su dirección pública y guarda el `tenant_id`. | ✅ Al abrir wp-admin |
+| **2. WooCommerce** | Crea un par de claves de la API de WooCommerce (descripción `provisioning`, lectura/escritura) y el Backend las prueba contra la tienda (`POST /tenants/{id}/wc/validate`). Si falla, reintenta solo con espera creciente (30 s → 5 min). | ✅ En el mismo request que el paso 1 |
+| **3. Canal** | WhatsApp (conexión directa con los datos de Meta) o Telegram. Ver [sección 6](#6-whatsapp-cómo-conectarlo). | ❌ Manual, un formulario |
+| **4. Personalización** | Nombre del bot, mensaje de bienvenida, instrucciones (`PATCH /config`). | ❌ Manual, desde el panel |
+| **5. Activación** | Exige WooCommerce verificado y al menos un canal conectado (`POST /activate`). | ❌ Manual, un botón |
 
-- XAMPP corriendo (Apache + MySQL)
-- WordPress 6.9.1 con WooCommerce instalado y activo
-- Plugin activado en el panel de WordPress
+Al abrir el panel del plugin, el estado se vuelve a leer del Backend (`GET /status`), así que lo que
+se ve ahí es la fuente de verdad. Si el Backend ya no reconoce la tienda (respuesta
+`INVALID_API_KEY`), el plugin borra su estado local y se vuelve a registrar solo.
 
----
-
-### 1. Verificar que los Pasos 1-2 se ejecutaron
+### Estado esperado después de los pasos 1 y 2
 
 ```bash
 wp chatbot status
 ```
 
-Deberías ver `tenant_id` y `wc_verified: true`. Si no se ejecutaron aún:
+Tiene que mostrar un `tenant_id` y `wc_verified: true`. Si no, forzalo:
 
 ```bash
 wp chatbot provision-auto
 ```
 
-O bien ve al panel admin → **Asistente Chatbot** y verifica el indicador de progreso.
+Con Docker, WP-CLI corre en un contenedor aparte (por ejemplo la imagen `wordpress:cli`) montado
+sobre el mismo `/var/www/html`, y ese contenedor también necesita `CHATBOT_BACKEND_URL`. Sin WP-CLI,
+el mismo estado se ve en wp-admin → Asistente Chatbot.
 
----
-
-### 2. Revisar la base de datos directamente
-
-```sql
--- Ver el estado de provisioning guardado
-SELECT option_name, option_value
-FROM wp_options
-WHERE option_name IN ('chatbot_provision', 'chatbot_provision_audit');
-
--- Verificar que se creó la WC API key
-SELECT * FROM wp_woocommerce_api_keys
-WHERE description = 'provisioning';
-```
-
----
-
-### 3. Probar los endpoints REST desde el navegador
-
-Abre el panel admin de WordPress, luego abre la consola del navegador (F12) y ejecuta:
-
-```javascript
-// Probar que el endpoint de WhatsApp responde
-fetch('/wp-json/chatbot/v1/wa/signup-url', {
-    headers: { 'X-WP-Nonce': chatbotAdmin.nonce }
-})
-.then(r => r.json())
-.then(console.log);
-```
-
-> `chatbotAdmin.nonce` está disponible en el panel admin gracias a `wp_localize_script`.
-
----
-
-### 4. Probar el wizard visual
-
-1. Ir a **WordPress Admin → Asistente Chatbot**
-2. El indicador de progreso debe mostrar el paso actual resaltado en azul
-3. Si `current_step = 2`, verás el panel de Paso 3 con el botón "Conectar WhatsApp"
-4. Si `current_step = 3`, verás además el formulario de Paso 4
-5. Si `current_step = 4`, verás el panel de Paso 5 con el botón "Activar Bot"
-
----
-
-### 5. Simular un webhook del Backend
-
-Obtén el `api_key_hash` desde la base de datos:
+Directo en la base:
 
 ```sql
 SELECT option_value FROM wp_options WHERE option_name = 'chatbot_provision';
--- Busca el campo "api_key_hash" en el JSON resultante
+SELECT key_id, description, permissions, truncated_key
+FROM wp_woocommerce_api_keys WHERE description = 'provisioning';
 ```
-
-Luego envía el webhook con curl:
-
-```bash
-curl -X POST https://tu-sitio.com/wp-json/chatbot/v1/webhook/backend \
-  -H "Authorization: Bearer <api_key_hash>" \
-  -H "Content-Type: application/json" \
-  -d '{"event": "tenant.activated", "data": {}}'
-```
-
-Eventos disponibles: `tenant.activated`, `tenant.suspended`, `wc.credentials_invalid`, `wa.token_revoked`, `plan.limit_warning`, `plan.limit_reached`.
 
 ---
 
-### 6. Revisar la bitácora de auditoría
+## 6. WhatsApp: cómo conectarlo
+
+En el paso 3 del panel hay dos opciones para WhatsApp:
+
+| Opción | Estado |
+|---|---|
+| Botón **"Conectar WhatsApp"** (inicio de sesión con Meta) | ⏸️ Deshabilitado. El regreso desde Facebook todavía no se completa en el Backend (Meta vuelve con una visita del navegador y la ruta espera una llamada de servidor). Se mantiene para cuando esté listo. |
+| **Conexión directa** (formulario debajo del botón) | ✅ La que se usa hoy. |
+
+### 6.1 Conexión directa, paso a paso
+
+1. En [Meta for Developers](https://developers.facebook.com/) entrá a **la App del chatbot** →
+   WhatsApp → **API Setup**. El token tiene que ser de esa App: es la que tiene configurado el
+   webhook que manda los mensajes al Backend. Un token de otra App conecta el número, pero los
+   mensajes no llegan.
+2. Copiá los tres datos:
+   - **Phone number ID** (no es el número de teléfono: es un ID numérico largo)
+   - **WhatsApp Business Account ID**
+   - **Token de acceso**. El temporal de API Setup vence en 24 horas; para producción, un token de
+     usuario del sistema, que no vence.
+3. En wp-admin → **Asistente Chatbot** → Paso 3 → **Conexión directa**, pegalos y tocá
+   **Conectar WhatsApp**.
+4. El Backend verifica los tres datos contra Meta, suscribe el webhook, guarda el token **cifrado** y
+   el panel muestra el número conectado. El token no queda guardado en WordPress.
+5. Seguí con los pasos 4 y 5.
+
+### 6.2 Si da error
+
+| Mensaje | Qué significa | Qué hacer |
+|---|---|---|
+| Meta no aceptó estos datos | El token venció o es de otra App, o el Phone number ID no es de ese WABA | Revisar los tres datos; generar un token nuevo |
+| Este número ya está conectado a otra tienda | **Un número, una tienda**: el Backend identifica la tienda por el número. Si estuviera en dos, los mensajes irían a la equivocada | Pedile a Adrian que lo desconecte de la tienda anterior (por ejemplo, la de pruebas) y volvé a intentar |
+| No se pudo suscribir el webhook | Meta rechazó la suscripción o falló el guardado | Reintentar; si sigue, revisar los permisos del token (`whatsapp_business_management`, `whatsapp_business_messaging`) |
+
+Reconectar el **mismo** número en la **misma** tienda (por ejemplo, con un token nuevo) sí se puede:
+"¿Reconectar o cambiar de número?" vuelve a mostrar el formulario.
+
+### 6.3 Telegram
+
+Funciona desde el mismo paso 3: se pega el token del bot (de @BotFather) y queda conectado en un solo
+paso. Alcanza con un canal (WhatsApp o Telegram) para activar el bot.
+
+---
+
+## 7. Qué hace el plugin además del onboarding
+
+| Función | Cómo |
+|---|---|
+| **Links de compra** | `/entrar/{token}` inicia sesión como el cliente; `/carrito/{token}` carga todos los productos de la compra; `/ir/{token}` agrega o cambia un producto. Los arma el Backend; el plugin los valida (firma con la API key, vencimiento) y los ejecuta. |
+| **Aviso de pedido nuevo** | Al crearse un pedido (checkout clásico o de bloques, o pago completado) avisa al Backend, que borra el carrito pendiente de esa conversación. |
+| **Búsqueda por teléfono** | `GET /wp-json/chatbot/v1/customers/lookup-by-phone` y `/orders/lookup-by-phone`: el Backend identifica al cliente y sus pedidos (también los de invitado). Compatible con HPOS y con el almacenamiento clásico. |
+| **Webhooks de estado** | `POST /wp-json/chatbot/v1/webhook/backend`: el Backend avisa activación, suspensión, credenciales inválidas, etc. |
+
+Las rutas que llama el Backend se autentican con `Authorization: Bearer <api_key_hash>`; las del
+panel, con la sesión de administrador de WordPress.
+
+**Al desinstalar** (Plugins → Borrar), el plugin borra sus opciones y la clave de WooCommerce que
+creó. No da de baja la tienda en el Backend: eso se pide a Adrian. Desactivarlo no borra nada.
+
+---
+
+## 8. Problemas comunes
+
+| Síntoma | Causa probable | Solución |
+|---|---|---|
+| El panel se queda en el paso 1, sin error | Falta `CHATBOT_BACKEND_URL` | [3.2](#32-configurar-la-dirección-del-backend); reiniciar el contenedor |
+| Paso 2 falla una y otra vez | WordPress cree que está en HTTP, o el Backend no llega al dominio | [Sección 4](#4-https-detrás-de-nginx); probar `https://tu-dominio/wp-json/wc/v3` desde fuera |
+| Paso 2 falla con 404 | Enlaces permanentes en "Simple" | Cambiarlos a "Nombre de la entrada" |
+| El bot manda links que no hacen nada | Falta `vendor/` | [3.1](#31-conseguir-el-plugin-completo) |
+| Los links abren `http://` o `localhost` | La dirección del sitio no es la pública con HTTPS | [4.2](#42-wordpress-la-dirección-del-sitio-con-https-desde-una-variable-de-entorno) |
+| El bot no responde por WhatsApp | El número sigue conectado a otra tienda, o no se conectó | [Sección 6](#6-whatsapp-cómo-conectarlo) |
+| Hay que empezar de cero | — | Borrar las opciones `chatbot_provision` y `chatbot_api_key_plain` y abrir wp-admin: se registra como tienda nueva (con otro `tenant_id`; avisale a Adrian para dar de baja el anterior) |
+
+**Modo soporte.** El dueño de la tienda no ve nada técnico en el panel. Para diagnosticar, agregá en
+`wp-config.php` (en Docker, dentro de `WORDPRESS_CONFIG_EXTRA`):
+
+```php
+define( 'CHATBOT_DEBUG', true );
+```
+
+Con eso aparece al pie del panel **Información Técnica (modo soporte)**: el estado del onboarding y
+la bitácora del plugin (últimos 10 eventos), con las credenciales (`api_key_hash`, `consumerKey`)
+como `***`. Si el registro no arranca, el aviso del panel muestra además el comando para correrlo a
+mano. Sacá la constante al terminar.
+
+Desde WP-CLI no hace falta la constante:
 
 ```bash
-wp chatbot status
+wp chatbot status        # estado del onboarding (tenant, paso, WooCommerce, WhatsApp)
+wp chatbot audit         # bitácora del plugin, el evento más nuevo primero
+wp chatbot clear-audit   # vacía la bitácora
 ```
 
-O desde la base de datos:
+Las llamadas al Backend que **fallan** quedan en el log de PHP (en Docker, `docker logs` del
+contenedor de WordPress), una línea por fallo con la respuesta del Backend:
+`[Chatbot Assistant] POST …/wa/connect-direct -> 400 response={"error":"INVALID_WHATSAPP_CREDENTIALS",…}`.
+Con `WP_DEBUG` encendido se registran también las que salen bien, con el cuerpo del pedido. Los
+tokens, secretos y claves aparecen siempre como `***`.
 
-```sql
-SELECT option_value FROM wp_options WHERE option_name = 'chatbot_provision_audit';
-```
+---
 
-Para limpiarla:
+## 9. Referencia rápida
 
-```bash
-wp chatbot clear-audit
-```
+- Comandos de WP-CLI y rutas REST con ejemplos: [`COMMANDS.md`](COMMANDS.md)
+- Contrato completo con el Backend: [`BACKEND_API_SPEC.md`](BACKEND_API_SPEC.md)
+- Entorno local de desarrollo de Adrian: `docker-compose.yml` + `docker-init.ps1` (WordPress en
+  `localhost:8210`, expuesto con un túnel HTTPS). No se usa en producción.

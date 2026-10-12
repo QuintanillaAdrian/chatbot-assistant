@@ -1,20 +1,7 @@
 <?php
 
 /**
- * The admin-specific functionality of the plugin.
- *
- * @link       https://https://portafolio-adrianquintanilla.vercel.app/
- * @since      1.0.0
- *
- * @package    Chatbot_Assistant
- * @subpackage Chatbot_Assistant/admin
- */
-
-/**
- * The admin-specific functionality of the plugin.
- *
- * Defines the plugin name, version, and two examples hooks for how to
- * enqueue the admin-specific stylesheet and JavaScript.
+ * Panel de administración del plugin: el menú "Asistente Chatbot" y el wizard de onboarding.
  *
  * @package    Chatbot_Assistant
  * @subpackage Chatbot_Assistant/admin
@@ -23,47 +10,39 @@
 class Chatbot_Assistant_Admin {
 
 	/**
-	 * The ID of this plugin.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 * @var      string    $plugin_name    The ID of this plugin.
+	 * Slug de la página del panel (también es el slug del plugin).
+	 */
+	const PAGE_SLUG = 'chatbot-assistant';
+
+	/**
+	 * @var string Slug del plugin, usado como handle del script.
 	 */
 	private $plugin_name;
 
 	/**
-	 * The version of this plugin.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 * @var      string    $version    The current version of this plugin.
+	 * @var string Versión del plugin, para invalidar la caché del script.
 	 */
 	private $version;
 
 	/**
-	 * Initialize the class and set its properties.
-	 *
-	 * @since    1.0.0
-	 * @param      string    $plugin_name       The name of this plugin.
-	 * @param      string    $version    The version of this plugin.
+	 * @var string Hook de la página del panel que devuelve add_menu_page (para cargar el script solo ahí).
 	 */
+	private $page_hook = '';
+
 	public function __construct( $plugin_name, $version ) {
-
 		$this->plugin_name = $plugin_name;
-		$this->version = $version;
-
+		$this->version     = $version;
 	}
 
 	/**
-	 * Register plugin admin menu
+	 * Registra el menú de nivel superior del panel.
 	 */
 	public function register_menu() {
-		// Creamos una página de nivel superior para ver el estado del provisioning.
-		add_menu_page(
+		$this->page_hook = add_menu_page(
 			'Asistente Chatbot',
 			'Asistente Chatbot',
 			'manage_options',
-			'chatbot-assistant',
+			self::PAGE_SLUG,
 			array( $this, 'display_admin_page' ),
 			'dashicons-format-chat'
 		);
@@ -79,136 +58,44 @@ class Chatbot_Assistant_Admin {
 		if ( ! empty( $store['tenant_id'] ) ) {
 			Chatbot_Assistant_Provision::sync_status_from_backend( $store['tenant_id'] );
 		}
-		// Leemos el estado local (ya resincronizado) y la bitácora antes de cargar la vista.
+		// Leemos el estado local (ya resincronizado) antes de cargar la vista.
 		$store = get_option( 'chatbot_provision' );
-		$audit = Chatbot_Assistant_Provision::get_audit_log();
-		$nonce = wp_create_nonce( 'chatbot_resend_provision' );
-		$nonce_update = wp_create_nonce( 'chatbot_update_keys' );
+
+		// La parte técnica (estado crudo, bitácora, comandos de WP-CLI) es para quien da soporte, no
+		// para el dueño de la tienda: solo con CHATBOT_DEBUG en wp-config.php. Aun así, las
+		// credenciales (api_key_hash, consumerKey, state_token) salen como ***.
+		$debug       = self::debug_enabled();
+		$store_debug = $debug ? Chatbot_Assistant_Backend_Client::mask_secrets( (array) $store ) : array();
+		$audit       = $debug ? Chatbot_Assistant_Backend_Client::mask_secrets( Chatbot_Assistant_Provision::get_audit_log() ) : array();
+
 		require_once plugin_dir_path( __FILE__ ) . 'partials/chatbot-assistant-admin-display.php';
 	}
 
-	public function ajax_resend_provision() {
-		// DEPRECATED: En el nuevo flujo Backend, los reenvíos se hacen a través del Backend API.
-		// Este método ya no está en uso.
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( array( 'error' => 'forbidden' ), 403 );
-		}
-		wp_send_json_error( array( 'error' => 'deprecated', 'message' => 'Este endpoint ya no está en uso. Usa el Backend API para reenvíos.' ), 410 );
-	}
-
-	public function ajax_update_keys() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( array( 'error' => 'forbidden' ), 403 );
-		}
-		check_ajax_referer( 'chatbot_update_keys' );
-
-		$ck = isset( $_POST['consumerKey'] ) ? sanitize_text_field( wp_unslash( $_POST['consumerKey'] ) ) : '';
-		$cs = isset( $_POST['consumerSecret'] ) ? sanitize_text_field( wp_unslash( $_POST['consumerSecret'] ) ) : '';
-		if ( empty( $ck ) ) {
-			wp_send_json_error( array( 'error' => 'empty_consumer_key' ), 400 );
-		}
-
-		if ( empty( $cs ) ) {
-			wp_send_json_error( array( 'error' => 'empty_consumer_secret' ), 400 );
-		}
-
-		// Both fields must match a real WooCommerce API key pair before we persist anything locally.
-		$validated = false;
-		if ( ! empty( $ck ) && ! empty( $cs ) ) {
-			global $wpdb;
-			$table = $wpdb->prefix . 'woocommerce_api_keys';
-			// Ensure table exists before querying.
-			$exists = $wpdb->get_var( $wpdb->prepare( "SHOW TABLES LIKE %s", $wpdb->esc_like( $table ) ) );
-			if ( $exists ) {
-				// Compute DB-stored consumer key hash using WC helper if available.
-				if ( function_exists( 'wc_api_hash' ) ) {
-					$db_key = wc_api_hash( $ck );
-				} else {
-					$db_key = hash_hmac( 'sha256', $ck, 'wc-api' );
-				}
-				$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `" . esc_sql( $table ) . "` WHERE consumer_key = %s LIMIT 1", $db_key ), ARRAY_A );
-				if ( empty( $row ) ) {
-					wp_send_json_error( array( 'error' => 'validation_failed', 'message' => 'No se encontró la clave en la tabla de WooCommerce' ), 400 );
-				}
-				// Compare secrets (DB stores secret in plain text historically)
-				if ( isset( $row['consumer_secret'] ) ) {
-					if ( $row['consumer_secret'] !== $cs ) {
-						wp_send_json_error( array( 'error' => 'validation_failed', 'message' => 'El secreto no coincide con la entrada de WooCommerce' ), 400 );
-					}
-				}
-				// If we get here, validation passed.
-				$validated = true;
-			}
-		}
-
-		if ( ! $validated ) {
-			wp_send_json_error( array( 'error' => 'validation_failed', 'message' => 'No se pudo validar la pareja consumer key / consumer secret' ), 400 );
-		}
-
-		$store = get_option( 'chatbot_provision', array() );
-		$store['consumerKey'] = $ck;
-		// The pair is valid, so we persist locally by default.
-		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-chatbot-assistant-provision.php';
-		$store['consumerSecret_encrypted'] = Chatbot_Assistant_Provision::encrypt_secret( $cs );
-		$store['consumerSecret_last4'] = substr( $cs, -4 );
-		$store['synced_at'] = current_time( 'mysql' );
-		update_option( 'chatbot_provision', $store, false );
-		Chatbot_Assistant_Provision::log_event( 'info', 'Admin updated keys', array( 'persist' => 'yes' ) );
-		wp_send_json_success( array( 'status' => 'ok' ) );
+	/**
+	 * Modo soporte del panel: `define( 'CHATBOT_DEBUG', true );` en wp-config.php. Es una constante y
+	 * no un usuario porque en la tienda de un cliente el administrador es el cliente.
+	 */
+	public static function debug_enabled() {
+		return defined( 'CHATBOT_DEBUG' ) && CHATBOT_DEBUG;
 	}
 
 	/**
-	 * Register the stylesheets for the admin area.
+	 * Carga el script del wizard solo en la página del panel, con la URL de las rutas REST del
+	 * plugin y el nonce. `rest_url()` respeta instalaciones en subcarpeta y enlaces "Simple".
 	 *
-	 * @since    1.0.0
+	 * @param string $hook_suffix Pantalla actual de wp-admin.
 	 */
-	public function enqueue_styles() {
+	public function enqueue_scripts( $hook_suffix ) {
+		if ( $hook_suffix !== $this->page_hook ) {
+			return;
+		}
 
-		/**
-		 * This function is provided for demonstration purposes only.
-		 *
-		 * An instance of this class should be passed to the run() function
-		 * defined in Chatbot_Assistant_Loader as all of the hooks are defined
-		 * in that particular class.
-		 *
-		 * The Chatbot_Assistant_Loader will then create the relationship
-		 * between the defined hooks and the functions defined in this
-		 * class.
-		 */
+		wp_enqueue_script( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'js/chatbot-assistant-admin.js', array(), $this->version, true );
 
-		// Cargamos los estilos del panel solo en el área administrativa.
-		wp_enqueue_style( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'css/chatbot-assistant-admin.css', array(), $this->version, 'all' );
-
-	}
-
-	/**
-	 * Register the JavaScript for the admin area.
-	 *
-	 * @since    1.0.0
-	 */
-	public function enqueue_scripts() {
-
-		/**
-		 * This function is provided for demonstration purposes only.
-		 *
-		 * An instance of this class should be passed to the run() function
-		 * defined in Chatbot_Assistant_Loader as all of the hooks are defined
-		 * in that particular class.
-		 *
-		 * The Chatbot_Assistant_Loader will then create the relationship
-		 * between the defined hooks and the functions defined in this
-		 * class.
-		 */
-
-		// Igual que con los estilos, el JS se limita al admin.
-		wp_enqueue_script( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'js/chatbot-assistant-admin.js', array( 'jquery' ), $this->version, false );
-
-		// Localizar script con nonce y URLs
 		wp_localize_script( $this->plugin_name, 'chatbotAdmin', array(
-			'nonce' => wp_create_nonce( 'wp_rest' ),
+			'nonce'   => wp_create_nonce( 'wp_rest' ),
 			'restUrl' => rest_url( 'chatbot/v1/' ),
 		) );
-
 	}
 
 }

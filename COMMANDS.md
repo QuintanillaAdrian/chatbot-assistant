@@ -50,6 +50,25 @@ wa_verified: false
 
 ---
 
+### `wp chatbot audit`
+
+Muestra la bitácora del onboarding (`chatbot_provision_audit`, últimos 10 eventos, el más nuevo
+primero), con las credenciales como `***`. Es la misma que el panel muestra solo en modo soporte
+(`define( 'CHATBOT_DEBUG', true );` en `wp-config.php`); acá no hace falta la constante.
+`provision-auto` la muestra sola cuando falla.
+
+```bash
+wp chatbot audit
+```
+
+**Salida de ejemplo:**
+```
+[2026-10-08 23:30:53] SUCCESS: WhatsApp conectado (conexión directa) {"phone":"+506 8888 9999"}
+[2026-10-08 23:25:10] SUCCESS: Paso 2 completado: WooCommerce validado {"mcp_registered":true}
+```
+
+---
+
 ### `wp chatbot clear-audit`
 
 Vacía la bitácora de auditoría local (`chatbot_provision_audit`).
@@ -65,26 +84,7 @@ wp chatbot clear-audit
 Base URL: `https://tu-sitio.com/wp-json/chatbot/v1/`
 
 Todos los endpoints del wizard requieren autenticación de WordPress admin (nonce `wp_rest` en header `X-WP-Nonce`).  
-El endpoint `/webhook/backend` usa `Authorization: Bearer <api_key_hash>`.
-
----
-
-### `POST /tenant/register`
-
-**Paso 1** — Registra el tenant en el Backend. Público (sin autenticación requerida en primera instalación).
-
-**Request:** ninguno
-
-**Response 201:**
-```json
-{
-  "success": true,
-  "tenant_id": "uuid",
-  "api_key": "plaintext-key",
-  "state_token": "token",
-  "status": "pending"
-}
-```
+Las rutas que llama el Backend (`/webhook/backend`, `/customers/lookup-by-phone`, `/orders/lookup-by-phone`) usan `Authorization: Bearer <api_key_hash>`. Los pasos 1 y 2 no tienen ruta REST: corren solos al abrir wp-admin.
 
 ---
 
@@ -127,6 +127,36 @@ El endpoint `/webhook/backend` usa `Authorization: Bearer <api_key_hash>`.
   "redirect_uri": "https://tu-sitio.com/wp-json/chatbot/v1/webhook/meta-oauth"
 }
 ```
+
+---
+
+### `POST /wa/connect-direct`
+
+**Paso 3 (alternativa sin OAuth)** — Conecta WhatsApp con los tres datos de Meta for Developers →
+App → WhatsApp → API Setup. Lo usa el formulario "Conexión directa" del wizard. El plugin reenvía los
+datos al Backend (`POST /tenants/{id}/wa/connect-direct`) y no guarda el token.
+
+**Headers:** `X-WP-Nonce: <nonce>` (administrador)
+
+**Body:**
+```json
+{
+  "phone_number_id": "123456789012345",
+  "waba_id": "123456789012345",
+  "access_token": "EAA..."
+}
+```
+
+**Response 200:**
+```json
+{
+  "success": true,
+  "phone": "+506 8888-9999"
+}
+```
+
+Errores: los del Backend, con su código HTTP (`400` datos inválidos, `409` número ya conectado a
+otra tienda, `500` fallo al suscribir en Meta).
 
 ---
 

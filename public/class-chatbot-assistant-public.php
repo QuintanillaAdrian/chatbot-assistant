@@ -11,94 +11,14 @@
  */
 
 /**
- * The public-facing functionality of the plugin.
- *
- * Defines the plugin name, version, and two examples hooks for how to
- * enqueue the public-facing stylesheet and JavaScript.
+ * Lado público del plugin: atiende los links que manda el bot (`/entrar/`, `/carrito/`, `/ir/`),
+ * valida su firma y vencimiento, y prepara el carrito y el checkout de WooCommerce.
  *
  * @package    Chatbot_Assistant
  * @subpackage Chatbot_Assistant/public
  * @author     Quintanilla <adrianq1299@gmail.com>
  */
 class Chatbot_Assistant_Public {
-
-	/**
-	 * The ID of this plugin.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 * @var      string    $plugin_name    The ID of this plugin.
-	 */
-	private $plugin_name;
-
-	/**
-	 * The version of this plugin.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 * @var      string    $version    The current version of this plugin.
-	 */
-	private $version;
-
-	/**
-	 * Initialize the class and set its properties.
-	 *
-	 * @since    1.0.0
-	 * @param      string    $plugin_name       The name of the plugin.
-	 * @param      string    $version    The version of this plugin.
-	 */
-	public function __construct( $plugin_name, $version ) {
-
-		$this->plugin_name = $plugin_name;
-		$this->version = $version;
-
-	}
-
-	/**
-	 * Register the stylesheets for the public-facing side of the site.
-	 *
-	 * @since    1.0.0
-	 */
-	public function enqueue_styles() {
-
-		/**
-		 * This function is provided for demonstration purposes only.
-		 *
-		 * An instance of this class should be passed to the run() function
-		 * defined in Chatbot_Assistant_Loader as all of the hooks are defined
-		 * in that particular class.
-		 *
-		 * The Chatbot_Assistant_Loader will then create the relationship
-		 * between the defined hooks and the functions defined in this
-		 * class.
-		 */
-
-		wp_enqueue_style( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'css/chatbot-assistant-public.css', array(), $this->version, 'all' );
-
-	}
-
-	/**
-	 * Register the JavaScript for the public-facing side of the site.
-	 *
-	 * @since    1.0.0
-	 */
-	public function enqueue_scripts() {
-
-		/**
-		 * This function is provided for demonstration purposes only.
-		 *
-		 * An instance of this class should be passed to the run() function
-		 * defined in Chatbot_Assistant_Loader as all of the hooks are defined
-		 * in that particular class.
-		 *
-		 * The Chatbot_Assistant_Loader will then create the relationship
-		 * between the defined hooks and the functions defined in this
-		 * class.
-		 */
-
-		wp_enqueue_script( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'js/chatbot-assistant-public.js', array( 'jquery' ), $this->version, false );
-
-	}
 
 	/**
 	 * Vacía el carrito de WooCommerce cuando el link de checkout que armó
@@ -393,12 +313,7 @@ class Chatbot_Assistant_Public {
 			return;
 		}
 
-		$expected_signature           = hash_hmac( 'sha256', $signed_message, $api_key_hash );
-		$expected_signature_truncated = hexdec( substr( $expected_signature, 0, 10 ) );
-		$valid_signature              = hash_equals( (string) $expected_signature_truncated, (string) $signature_truncated );
-		$expired                      = time() > $expires_at;
-
-		if ( ! $valid_signature || $expired ) {
+		if ( ! self::link_is_valid( $signed_message, $signature_truncated, $expires_at, $api_key_hash ) ) {
 			$this->reject_checkout_link( 'Este link de acceso ya venció.' );
 			return;
 		}
@@ -628,11 +543,7 @@ class Chatbot_Assistant_Public {
 			$signed_message = "cart:{$expires_at}:{$limpiar_flag}:{$batch_epoch_ms}:{$phone_digits}:{$canonical}";
 		}
 
-		$expected_signature           = hash_hmac( 'sha256', $signed_message, $api_key_hash );
-		$expected_signature_truncated = hexdec( substr( $expected_signature, 0, 10 ) );
-		$valid_signature              = hash_equals( (string) $expected_signature_truncated, (string) $signature_truncated );
-
-		if ( ! $valid_signature || time() > $expires_at ) {
+		if ( ! self::link_is_valid( $signed_message, $signature_truncated, $expires_at, $api_key_hash ) ) {
 			$this->reject_checkout_link( 'Este link de compra ya venció.' );
 			return;
 		}
@@ -767,15 +678,13 @@ class Chatbot_Assistant_Public {
 
 		list( $product_id, $quantity, $expires_at, $limpiar_flag, $batch_epoch_ms, $variation_id, $signature_truncated ) = $decoded;
 
-		$expected_signature           = hash_hmac( 'sha256', "{$product_id}:{$quantity}:{$expires_at}:{$variation_id}", $api_key_hash );
-		$expected_signature_truncated = hexdec( substr( $expected_signature, 0, 10 ) );
-		$valid_signature              = hash_equals( (string) $expected_signature_truncated, (string) $signature_truncated );
-		$expired                      = time() > $expires_at;
-
-		if ( ! $valid_signature || $expired ) {
+		$signed_message = "{$product_id}:{$quantity}:{$expires_at}:{$variation_id}";
+		if ( ! self::link_is_valid( $signed_message, $signature_truncated, $expires_at, $api_key_hash ) ) {
 			$this->reject_checkout_link( 'Este link de compra ya venció.' );
 			return;
 		}
+		// La URL larga lleva la firma completa: la vuelve a validar maybe_reject_expired_checkout_link.
+		$expected_signature = self::link_signature( $signed_message, $api_key_hash );
 
 		// Reconstruye la URL larga de siempre — arma el MISMO formato que
 		// armaba services/sales.ts antes de este cambio, así el resto del
@@ -831,12 +740,8 @@ class Chatbot_Assistant_Public {
 
 		list( $action_type, $product_id, $variation_id, $value, $expires_at, $signature_truncated ) = $decoded;
 
-		$expected_signature           = hash_hmac( 'sha256', "{$action_type}:{$product_id}:{$variation_id}:{$value}:{$expires_at}", $api_key_hash );
-		$expected_signature_truncated = hexdec( substr( $expected_signature, 0, 10 ) );
-		$valid_signature              = hash_equals( (string) $expected_signature_truncated, (string) $signature_truncated );
-		$expired                      = time() > $expires_at;
-
-		if ( ! $valid_signature || $expired ) {
+		$signed_message = "{$action_type}:{$product_id}:{$variation_id}:{$value}:{$expires_at}";
+		if ( ! self::link_is_valid( $signed_message, $signature_truncated, $expires_at, $api_key_hash ) ) {
 			$this->reject_checkout_link( 'Este link ya venció.' );
 			return;
 		}
@@ -921,11 +826,7 @@ class Chatbot_Assistant_Public {
 			return;
 		}
 
-		$expected_signature = hash_hmac( 'sha256', "{$product_id}:{$quantity}:{$expires_at}:{$variation_id}", $api_key_hash );
-		$valid_signature    = hash_equals( $expected_signature, $signature );
-		$expired            = time() > $expires_at;
-
-		if ( $valid_signature && ! $expired ) {
+		if ( self::link_is_valid( "{$product_id}:{$quantity}:{$expires_at}:{$variation_id}", $signature, $expires_at, $api_key_hash, false ) ) {
 			return;
 		}
 
@@ -934,17 +835,42 @@ class Chatbot_Assistant_Public {
 	}
 
 	/**
-	 * wp_die compartido por los dos guards de link de checkout — el largo
-	 * (maybe_reject_expired_checkout_link) y el corto
-	 * (maybe_expand_short_checkout_link) — para cualquier motivo de
-	 * rechazo (vencido, firma inválida, token corrupto). Antes de mostrar
-	 * el error, limpia los parámetros de add-to-cart de $_GET: ninguno debe
-	 * llegar a WC_Form_Handler::add_to_cart_action() (prioridad 20) — si
-	 * dejamos pasar 'add-to-cart', WooCommerce agrega el producto igual
-	 * aunque le mostremos un error al cliente después.
+	 * Firma de un link del bot: HMAC-SHA256 del mensaje con `api_key_hash` como secreto compartido.
+	 * Misma fórmula que truncatedLinkSignature en services/sales.ts del Backend (antes de truncar). Hasta el 2026-10-10 estaba
+	 * escrita a mano en cada uno de los cinco manejadores de links (L1 en PLAN_DE_CORRECCIONES.md
+	 * del Backend).
 	 *
-	 * @since 1.2.0
+	 * @param string $signed_message Lo que firma el Backend (cada tipo de link arma el suyo).
+	 * @param string $api_key_hash   Secreto compartido con el Backend.
+	 * @return string Firma completa, en hex.
 	 */
+	private static function link_signature( $signed_message, $api_key_hash ) {
+		return hash_hmac( 'sha256', $signed_message, $api_key_hash );
+	}
+
+	/**
+	 * ¿El link es auténtico y no venció?
+	 *
+	 * Los tokens de hashids (`/entrar/`, `/carrito/`, `/ir/`, edición) llevan la firma truncada: los
+	 * primeros 10 hex como número (40 bits, S8 del plan; cambiar el largo se hace acá y en
+	 * truncatedLinkSignature del Backend). La URL larga de checkout (`&sig=`) lleva la firma completa.
+	 * La comparación es en tiempo constante.
+	 *
+	 * @param string     $signed_message Lo que firma el Backend.
+	 * @param string|int $signature      La firma que trajo el link.
+	 * @param int        $expires_at     Vencimiento (epoch en segundos).
+	 * @param string     $api_key_hash   Secreto compartido con el Backend.
+	 * @param bool       $truncated      true = firma de token (truncada); false = firma completa.
+	 * @return bool
+	 */
+	private static function link_is_valid( $signed_message, $signature, $expires_at, $api_key_hash, $truncated = true ) {
+		$expected = self::link_signature( $signed_message, $api_key_hash );
+		if ( $truncated ) {
+			$expected = (string) hexdec( substr( $expected, 0, 10 ) );
+		}
+		return hash_equals( $expected, (string) $signature ) && time() <= (int) $expires_at;
+	}
+
 	/**
 	 * Token único de compra (2026-10-04): un solo token lleva login + carrito.
 	 *
@@ -1005,6 +931,15 @@ class Chatbot_Assistant_Public {
 		);
 	}
 
+	/**
+	 * wp_die compartido por los manejadores de links del bot, para cualquier motivo de rechazo
+	 * (vencido, firma inválida, token corrupto). Antes de mostrar el error, limpia los parámetros de
+	 * add-to-cart de $_GET: ninguno debe llegar a WC_Form_Handler::add_to_cart_action() (prioridad
+	 * 20) — si dejamos pasar 'add-to-cart', WooCommerce agrega el producto igual aunque le mostremos
+	 * un error al cliente después.
+	 *
+	 * @since 1.2.0
+	 */
 	private function reject_checkout_link( $reason ) {
 
 		unset( $_GET['add-to-cart'], $_GET['quantity'], $_GET['reemplazar_item'], $_GET['limpiar_carrito'], $_GET['variation_id'], $_GET['exp'], $_GET['sig'] );

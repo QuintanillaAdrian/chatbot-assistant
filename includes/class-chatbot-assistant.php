@@ -68,16 +68,11 @@ class Chatbot_Assistant {
 	 */
 	public function __construct() {
 		// Inicialización mínima: versión + slug del plugin.
-		if ( defined( 'CHATBOT_ASSISTANT_VERSION' ) ) {
-			$this->version = CHATBOT_ASSISTANT_VERSION;
-		} else {
-			$this->version = '1.0.0';
-		}
+		$this->version = CHATBOT_ASSISTANT_VERSION;
 		$this->plugin_name = 'chatbot-assistant';
 
-		// Orden importante: primero cargamos clases, luego locale y por último hooks.
+		// Orden importante: primero cargamos clases y después registramos los hooks.
 		$this->load_dependencies();
-		$this->set_locale();
 		$this->define_admin_hooks();
 		$this->define_public_hooks();
 	}
@@ -88,7 +83,6 @@ class Chatbot_Assistant {
 	 * Include the following files that make up the plugin:
 	 *
 	 * - Chatbot_Assistant_Loader. Orchestrates the hooks of the plugin.
-	 * - Chatbot_Assistant_i18n. Defines internationalization functionality.
 	 * - Chatbot_Assistant_Admin. Defines all hooks for the admin area.
 	 * - Chatbot_Assistant_Public. Defines all hooks for the public side of the site.
 	 *
@@ -107,12 +101,6 @@ class Chatbot_Assistant {
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-chatbot-assistant-loader.php';
 
 		/**
-		 * The class responsible for defining internationalization functionality
-		 * of the plugin.
-		 */
-		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-chatbot-assistant-i18n.php';
-
-		/**
 		 * The class responsible for defining all actions that occur in the admin area.
 		 */
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'admin/class-chatbot-assistant-admin.php';
@@ -123,12 +111,11 @@ class Chatbot_Assistant {
 		 */
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'public/class-chatbot-assistant-public.php';
 
-		// Librería hashids (Composer) — arma/desarma los links cortos de
-		// checkout (`/ir/{token}`, ver Chatbot_Assistant_Public::
-		// maybe_expand_short_checkout_link). `file_exists` por las dudas de
-		// que alguien copie el plugin sin correr antes `composer install`
-		// — sin el autoload, esos links cortos simplemente no se expanden
-		// (el resto del plugin sigue funcionando normal).
+		// Librería hashids (Composer) — desarma los tokens de TODOS los links
+		// del bot (`/entrar/`, `/carrito/`, `/ir/`, ver Chatbot_Assistant_Public).
+		// `file_exists` por si alguien copia el plugin sin `vendor/` (no está en
+		// git; ver HOW_IT_WORKS.md, 3.1): el panel y el onboarding siguen
+		// funcionando, pero esos links no hacen nada al abrirlos.
 		$hashids_autoload = plugin_dir_path( dirname( __FILE__ ) ) . 'vendor/autoload.php';
 		if ( file_exists( $hashids_autoload ) ) {
 			require_once $hashids_autoload;
@@ -148,24 +135,6 @@ class Chatbot_Assistant {
 	}
 
 	/**
-	 * Define the locale for this plugin for internationalization.
-	 *
-	 * Uses the Chatbot_Assistant_i18n class in order to set the domain and to register the hook
-	 * with WordPress.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 */
-	private function set_locale() {
-
-		$plugin_i18n = new Chatbot_Assistant_i18n();
-
-		// Cargamos traducciones cuando WordPress ya terminó de cargar plugins.
-		$this->loader->add_action( 'plugins_loaded', $plugin_i18n, 'load_plugin_textdomain' );
-
-	}
-
-	/**
 	 * Register all of the hooks related to the admin area functionality
 	 * of the plugin.
 	 *
@@ -176,13 +145,9 @@ class Chatbot_Assistant {
 
 		$plugin_admin = new Chatbot_Assistant_Admin( $this->get_plugin_name(), $this->get_version() );
 
-		// Todo lo del panel admin (assets, menú y acción AJAX de reenvío).
-		$this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_styles' );
-		$this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_scripts' );
+		// Menú del panel y el script del wizard (solo en esa página).
 		$this->loader->add_action( 'admin_menu', $plugin_admin, 'register_menu' );
-		$this->loader->add_action( 'wp_ajax_chatbot_resend_provision', $plugin_admin, 'ajax_resend_provision' );
-		// AJAX handler for updating keys from admin UI
-		$this->loader->add_action( 'wp_ajax_chatbot_update_keys', $plugin_admin, 'ajax_update_keys' );
+		$this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_scripts' );
 
 	}
 
@@ -195,11 +160,9 @@ class Chatbot_Assistant {
 	 */
 	private function define_public_hooks() {
 
-		$plugin_public = new Chatbot_Assistant_Public( $this->get_plugin_name(), $this->get_version() );
+		$plugin_public = new Chatbot_Assistant_Public();
 
-		// Hooks del front y del flujo automático de provisioning.
-		$this->loader->add_action( 'wp_enqueue_scripts', $plugin_public, 'enqueue_styles' );
-		$this->loader->add_action( 'wp_enqueue_scripts', $plugin_public, 'enqueue_scripts' );
+		// Onboarding automático (pasos 1 y 2), solo en wp-admin — ver maybe_run_pending_provision.
 		$this->loader->add_action( 'init', 'Chatbot_Assistant_Provision', 'maybe_run_pending_provision' );
 
 		// Desarma el link corto de checkout (`/ir/{token}`, ver

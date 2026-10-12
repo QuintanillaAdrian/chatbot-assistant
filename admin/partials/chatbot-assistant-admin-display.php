@@ -2,6 +2,9 @@
 /**
  * Admin view - 5-Step Wizard UI
  *
+ * Variables de Chatbot_Assistant_Admin::display_admin_page: $store (estado local), $debug (modo
+ * soporte, CHATBOT_DEBUG), $store_debug y $audit (estado y bitácora enmascarados; vacíos sin $debug).
+ *
  * @package    Chatbot_Assistant
  * @subpackage Chatbot_Assistant/admin/partials
  */
@@ -11,7 +14,10 @@
 
 	<?php if ( empty( $store ) || empty( $store['tenant_id'] ) ) : ?>
 		<div class="notice notice-warning">
-			<p>Inicializando provisioning... Si persiste, ejecuta <code>wp chatbot provision-auto</code>.</p>
+			<p>Conectando tu tienda con el asistente… Recargá esta página en unos minutos. Si no avanza, contactá a soporte.</p>
+			<?php if ( $debug ) : ?>
+				<p>Soporte: <code>wp chatbot provision-auto</code> corre el registro a mano y muestra la bitácora si falla.</p>
+			<?php endif; ?>
 		</div>
 	<?php else :
 		$current = (int) ( $store['current_step'] ?? 1 );
@@ -148,6 +154,29 @@
 								</div>
 								<button type="button" class="button button-primary" id="chatbot-wa-connect-btn" disabled>Conectar WhatsApp</button>
 								<div id="chatbot-wa-status" style="margin-top: 10px;"></div>
+
+								<?php // Conexión directa (2026-10-08): los tres datos de Meta → App → WhatsApp → API Setup. Convive con el botón de Meta de arriba. ?>
+								<div style="margin-top: 15px; padding-top: 12px; border-top: 1px dashed #ddd;">
+									<p style="margin-top: 0;"><strong>Conexión directa</strong></p>
+									<p class="description" style="margin-bottom: 10px;">
+										Copiá estos datos de Meta for Developers → tu App → WhatsApp → API Setup.
+										El token viaja por HTTPS al servidor del chatbot, que lo guarda cifrado; no queda guardado en WordPress.
+									</p>
+									<p>
+										<label for="chatbot-wa-phone-number-id">Phone number ID</label><br>
+										<input type="text" id="chatbot-wa-phone-number-id" class="regular-text" autocomplete="off" placeholder="123456789012345">
+									</p>
+									<p>
+										<label for="chatbot-wa-waba-id">WhatsApp Business Account ID</label><br>
+										<input type="text" id="chatbot-wa-waba-id" class="regular-text" autocomplete="off" placeholder="123456789012345">
+									</p>
+									<p>
+										<label for="chatbot-wa-access-token">Token de acceso</label><br>
+										<input type="password" id="chatbot-wa-access-token" class="regular-text" autocomplete="off" placeholder="EAA...">
+									</p>
+									<button type="button" class="button button-primary" id="chatbot-wa-direct-btn">Conectar WhatsApp</button>
+									<div id="chatbot-wa-direct-status" style="margin-top: 10px;"></div>
+								</div>
 							</div>
 						</div>
 
@@ -227,12 +256,13 @@
 
 		</div>
 
-		<!-- Info técnica (colapsable) -->
+		<!-- Info técnica (colapsable), solo en modo soporte: CHATBOT_DEBUG en wp-config.php -->
+		<?php if ( $debug ) : ?>
 		<details style="margin-top: 40px; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-			<summary style="cursor: pointer; font-weight: bold; color: #0073aa;">Información Técnica</summary>
+			<summary style="cursor: pointer; font-weight: bold; color: #0073aa;">Información Técnica (modo soporte)</summary>
 			<div style="margin-top: 10px; padding: 10px; background: #f5f5f5; font-family: monospace; font-size: 11px; overflow: auto;">
 				<strong>Estado:</strong>
-				<pre><?php echo esc_html( wp_json_encode( $store, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ); ?></pre>
+				<pre><?php echo esc_html( wp_json_encode( $store_debug, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ); ?></pre>
 				<?php if ( ! empty( $audit ) && is_array( $audit ) ) : ?>
 					<strong>Bitácora (últimas 10):</strong>
 					<?php foreach ( $audit as $entry ) : ?>
@@ -248,129 +278,8 @@
 				<?php endif; ?>
 			</div>
 		</details>
+		<?php endif; ?>
 
 	<?php endif; ?>
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-	var REST_NONCE = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
-
-	var waBtn = document.getElementById('chatbot-wa-connect-btn');
-	if (waBtn) {
-		waBtn.addEventListener('click', function () {
-			var statusEl = document.getElementById('chatbot-wa-status');
-			statusEl.textContent = 'Obteniendo URL de Meta...';
-			fetch('/wp-json/chatbot/v1/wa/signup-url', { headers: { 'X-WP-Nonce': REST_NONCE } })
-				.then(function (r) { return r.json(); })
-				.then(function (data) {
-					if (data.signup_url) { window.location.href = data.signup_url; }
-					else { statusEl.textContent = 'Error: ' + (data.error || 'Respuesta inesperada'); }
-				})
-				.catch(function () { statusEl.textContent = 'Error de red'; });
-		});
-	}
-
-	var telegramCheckConfirmBtn = document.getElementById('chatbot-telegram-check-confirm-btn');
-	if (telegramCheckConfirmBtn) {
-		telegramCheckConfirmBtn.addEventListener('click', function () {
-			// display_admin_page() re-sincroniza con el Backend en cada carga
-			// (ver admin/class-chatbot-assistant-admin.php) — no hace falta
-			// ningún endpoint nuevo, alcanza con recargar.
-			telegramCheckConfirmBtn.disabled = true;
-			telegramCheckConfirmBtn.textContent = 'Revisando...';
-			window.location.reload();
-		});
-	}
-
-	var telegramReconnectLink = document.getElementById('chatbot-telegram-reconnect-link');
-	if (telegramReconnectLink) {
-		telegramReconnectLink.addEventListener('click', function (e) {
-			e.preventDefault();
-			if (!confirm('¿Seguro que querés reconectar? Esto va a reemplazar el bot de Telegram actual.')) {
-				return;
-			}
-			document.getElementById('chatbot-telegram-connect-form').style.display = 'block';
-			telegramReconnectLink.style.display = 'none';
-		});
-	}
-
-	var waReconnectLink = document.getElementById('chatbot-wa-reconnect-link');
-	if (waReconnectLink) {
-		waReconnectLink.addEventListener('click', function (e) {
-			e.preventDefault();
-			if (!confirm('¿Seguro que querés reconectar? Esto va a reemplazar el número de WhatsApp actual.')) {
-				return;
-			}
-			document.getElementById('chatbot-wa-connect-form').style.display = 'block';
-			waReconnectLink.style.display = 'none';
-		});
-	}
-
-	var telegramBtn = document.getElementById('chatbot-telegram-connect-btn');
-	if (telegramBtn) {
-		telegramBtn.addEventListener('click', function () {
-			var tokenEl = document.getElementById('chatbot-telegram-token');
-			var statusEl = document.getElementById('chatbot-telegram-status');
-			var token = tokenEl.value.trim();
-			if (!token) {
-				statusEl.textContent = 'Pegá el token que te dio @BotFather primero';
-				return;
-			}
-			telegramBtn.disabled = true;
-			statusEl.textContent = 'Conectando con Telegram...';
-			fetch('/wp-json/chatbot/v1/telegram/connect', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': REST_NONCE },
-				body: JSON.stringify({ bot_token: token })
-			})
-				.then(function (r) { return r.json(); })
-				.then(function (data) {
-					if (data.success) { statusEl.textContent = 'Conectado!'; setTimeout(function () { window.location.reload(); }, 800); }
-					else { statusEl.textContent = 'Error: ' + (data.error || ''); telegramBtn.disabled = false; }
-				})
-				.catch(function () { statusEl.textContent = 'Error de red'; telegramBtn.disabled = false; });
-		});
-	}
-
-	var configForm = document.getElementById('chatbot-config-form');
-	if (configForm) {
-		configForm.addEventListener('submit', function (e) {
-			e.preventDefault();
-			var statusEl = document.getElementById('chatbot-config-status');
-			statusEl.textContent = 'Guardando...';
-			fetch('/wp-json/chatbot/v1/config', {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': REST_NONCE },
-				body: JSON.stringify({
-					bot_name: document.getElementById('chatbot-bot-name').value,
-					welcome_message: document.getElementById('chatbot-welcome-msg').value,
-					system_prompt: document.getElementById('chatbot-system-prompt').value,
-				})
-			})
-				.then(function (r) { return r.json(); })
-				.then(function (d) {
-					statusEl.textContent = d.success ? 'Guardado correctamente' : ('Error: ' + (d.error || ''));
-					if (d.success) { setTimeout(function () { window.location.reload(); }, 800); }
-				})
-				.catch(function () { statusEl.textContent = 'Error de red'; });
-		});
-	}
-
-	var activateBtn = document.getElementById('chatbot-activate-btn');
-	if (activateBtn) {
-		activateBtn.addEventListener('click', function () {
-			var statusEl = document.getElementById('chatbot-activate-status');
-			activateBtn.disabled = true;
-			statusEl.textContent = 'Activando...';
-			fetch('/wp-json/chatbot/v1/activate', { method: 'POST', headers: { 'X-WP-Nonce': REST_NONCE } })
-				.then(function (r) { return r.json(); })
-				.then(function (d) {
-					if (d.success) { statusEl.textContent = 'Bot activado!'; setTimeout(function () { window.location.reload(); }, 800); }
-					else { statusEl.textContent = 'Error: ' + (d.error || ''); activateBtn.disabled = false; }
-				})
-				.catch(function () { statusEl.textContent = 'Error de red'; activateBtn.disabled = false; });
-		});
-	}
-});
-</script>

@@ -81,8 +81,6 @@ class Chatbot_Assistant_Backend_Client {
 			$args['body'] = wp_json_encode( $data );
 		}
 
-		self::debug_log( "-> REQUEST {$method} {$url}", self::mask_secrets( $data ) );
-
 		// Elegir el método correcto de wp_remote_*
 		if ( 'POST' === $method ) {
 			$response = wp_remote_post( $url, $args );
@@ -94,31 +92,56 @@ class Chatbot_Assistant_Backend_Client {
 			$response = wp_remote_get( $url, $args );
 		}
 
-		self::debug_log( "<- RESPONSE {$method} {$url}", $response );
+		self::log_call( $method, $url, $data, $response );
 
 		return $response;
 	}
 
 	/**
-	 * Escribe en el log de errores de PHP el objeto crudo de request/response
-	 * hacia el Backend, para diagnosticar fallos de conexion (timeouts, URL
-	 * incorrecta, etc). Enmascara claves sensibles antes de loggear.
+	 * Deja en el log de PHP las llamadas al Backend que conviene mirar.
+	 *
+	 * - Si falla (error de conexión o código 400 o más): siempre, en una línea, con el cuerpo de la
+	 *   respuesta (el Backend explica ahí qué pasó, por ejemplo INVALID_WHATSAPP_CREDENTIALS).
+	 * - Con WP_DEBUG: todas, también las que salen bien, y además el cuerpo del pedido.
+	 * Los cuerpos pasan siempre por mask_secrets.
+	 *
+	 * Hasta el 2026-10-10 cada pedido y cada respuesta se volcaban con print_r siempre, y la respuesta
+	 * entera (headers, cookies, el objeto HTTP) sin enmascarar (M3 en PLAN_DE_CORRECCIONES.md del
+	 * Backend).
 	 */
-	private static function debug_log( $label, $data ) {
-		error_log( '[Chatbot Assistant] ' . $label . ' ' . print_r( $data, true ) );
+	private static function log_call( $method, $url, $data, $response ) {
+		$failed = is_wp_error( $response ) || (int) wp_remote_retrieve_response_code( $response ) >= 400;
+		$debug  = defined( 'WP_DEBUG' ) && WP_DEBUG;
+		if ( ! $failed && ! $debug ) {
+			return;
+		}
+
+		if ( is_wp_error( $response ) ) {
+			$line = "[Chatbot Assistant] {$method} {$url} -> error: " . $response->get_error_message();
+		} else {
+			$raw  = wp_remote_retrieve_body( $response );
+			$body = json_decode( $raw, true );
+			$line = "[Chatbot Assistant] {$method} {$url} -> " . wp_remote_retrieve_response_code( $response )
+				. ' response=' . ( null === $body ? substr( $raw, 0, 300 ) : wp_json_encode( self::mask_secrets( $body ) ) );
+		}
+		if ( $debug && ! empty( $data ) ) {
+			$line .= ' request=' . wp_json_encode( self::mask_secrets( $data ) );
+		}
+		error_log( $line );
 	}
 
 	/**
-	 * Enmascara valores de claves sensibles (secret, token, api_key,
-	 * authorization) en un array, recursivamente, antes de loggearlo.
+	 * Enmascara valores de claves sensibles (secret, token, api_key, authorization, consumer key) en
+	 * un array, recursivamente. La usan el log de las llamadas al Backend y la sección técnica del
+	 * panel (modo CHATBOT_DEBUG).
 	 */
-	private static function mask_secrets( $value ) {
+	public static function mask_secrets( $value ) {
 		if ( ! is_array( $value ) ) {
 			return $value;
 		}
 		$masked = array();
 		foreach ( $value as $key => $val ) {
-			if ( is_string( $key ) && preg_match( '/secret|token|authorization|api_key/i', $key ) ) {
+			if ( is_string( $key ) && preg_match( '/secret|token|authorization|api_key|consumer_?key/i', $key ) ) {
 				$masked[ $key ] = '***';
 			} else {
 				$masked[ $key ] = self::mask_secrets( $val );
@@ -161,7 +184,7 @@ class Chatbot_Assistant_Backend_Client {
 			'store_name'     => get_bloginfo( 'name' ),
 			'wp_version'     => get_bloginfo( 'version' ),
 			'wc_version'     => defined( 'WC_VERSION' ) ? WC_VERSION : '',
-			'plugin_version' => '1.0.0',
+			'plugin_version' => CHATBOT_ASSISTANT_VERSION,
 		);
 
 		$response = self::request( '/tenants', 'POST', $payload, $api_key );
@@ -260,6 +283,35 @@ class Chatbot_Assistant_Backend_Client {
 			'wa_verified'         => $parsed['body']['wa_verified'],
 			'phone_number'        => $parsed['body']['phone_number'] ?? '',
 			'webhook_registered'  => $parsed['body']['webhook_registered'] ?? false,
+		);
+	}
+
+	/**
+	 * PASO 3 sin OAuth: conexión directa de WhatsApp (2026-10-08) con los tres datos del panel de
+	 * Meta. El Backend los verifica contra Meta, suscribe el webhook y guarda el token cifrado; el
+	 * plugin no lo persiste. Convive con el flujo OAuth (complete_wa_setup).
+	 */
+	public static function connect_wa_direct( $tenant_id, $phone_number_id, $waba_id, $access_token ) {
+		$payload = array(
+			'phone_number_id' => $phone_number_id,
+			'waba_id'         => $waba_id,
+			'access_token'    => $access_token,
+		);
+
+		$response = self::request( "/tenants/{$tenant_id}/wa/connect-direct", 'POST', $payload );
+		$parsed   = self::parse_response( $response );
+
+		if ( ! $parsed['success'] || empty( $parsed['body']['wa_verified'] ) ) {
+			return array(
+				'success' => false,
+				'error'   => $parsed['body']['message'] ?? 'No se pudo conectar WhatsApp',
+				'code'    => $parsed['code'],
+			);
+		}
+
+		return array(
+			'success'      => true,
+			'phone_number' => $parsed['body']['phone_number'] ?? '',
 		);
 	}
 

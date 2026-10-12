@@ -46,6 +46,7 @@ La API Key es generada por el plugin al instalarse (UUID v4), guardada en `wp_op
 POST /tenants                          → Paso 1: registra tenant, recibe tenant_id
 POST /tenants/{id}/wc/validate         → Paso 2: plugin crea CK/CS y las valida
 POST /tenants/{id}/wa/signup           → Paso 3: Embedded Signup OAuth de Meta
+POST /tenants/{id}/wa/connect-direct   → Paso 3 (alternativa): conexión directa con los datos de Meta
 PATCH /tenants/{id}/config             → Paso 4: personalización del bot
 POST /tenants/{id}/activate            → Paso 5: activa bot (requiere wc + wa verificados)
 ```
@@ -66,7 +67,7 @@ El wizard puede retomarse — si el emprendedor cierra el browser, el `current_s
 ### 1. POST /tenants
 **Paso 1 — Registro inicial del tenant**
 
-El plugin genera la API Key localmente, la hashea y la envía junto con los datos básicos de la tienda. El backend crea el registro en PostgreSQL y devuelve el `tenant_id` que el plugin guardará en `wp_chatbot_tenants` para todos los requests posteriores.
+El plugin genera la API Key localmente, la hashea y la envía junto con los datos básicos de la tienda. El backend crea el registro (DynamoDB) y devuelve el `tenant_id`, que el plugin guarda en la opción `chatbot_provision` de `wp_options` para todos los requests posteriores.
 
 **Request:**
 ```json
@@ -76,7 +77,7 @@ El plugin genera la API Key localmente, la hashea y la envía junto con los dato
   "store_name": "Mi Tienda Online",
   "wp_version": "6.9.1",
   "wc_version": "8.2.1",
-  "plugin_version": "1.0.0"
+  "plugin_version": "1.0.1"
 }
 ```
 
@@ -228,6 +229,54 @@ El popup de Meta Embedded Signup devuelve un `code` OAuth al frontend del plugin
 | `422` | `WEBHOOK_REGISTRATION_FAILED` | El backend no pudo registrar el webhook en Meta |
 | `404` | `TENANT_NOT_FOUND` | El tenant_id no existe |
 | `500` | `DATABASE_ERROR` | Error al guardar token cifrado |
+
+> ⚠️ **Estado (2026-10-08):** este flujo no se completa todavía. El `redirect_uri` que arma
+> `/wa/signup-url` apunta a esta ruta, pero Meta vuelve con un `GET` del navegador y esta ruta es solo
+> `POST` con Bearer y JSON. Mientras tanto se usa `/wa/connect-direct` (abajo).
+
+---
+
+### 4b. POST /tenants/{tenant_id}/wa/connect-direct
+**Paso 3 — Conexión directa de WhatsApp (sin OAuth)** · agregado 2026-10-08
+
+El dueño de la tienda pega en el wizard los tres datos de Meta for Developers → App → WhatsApp → API
+Setup. Convive con el Embedded Signup; el resultado es el mismo. El backend:
+1. Verifica con Meta que el token es válido y que el número pertenece a ese WABA (y obtiene el número
+   visible)
+2. Rechaza el número si ya está conectado a **otra** tienda (el webhook de WhatsApp resuelve la tienda
+   por `phone_number_id`; un número en dos tiendas mandaría los mensajes a la equivocada)
+3. Suscribe la App al WABA (webhook de mensajes)
+4. Guarda los tres datos cifrados y avanza `current_step` a 3 — el token nunca vuelve al plugin
+
+**Request:**
+```json
+{
+  "phone_number_id": "123456789012345",
+  "waba_id": "123456789012345",
+  "access_token": "EAA..."
+}
+```
+
+**Response 200 OK:**
+```json
+{
+  "success": true,
+  "wa_verified": true,
+  "phone_number": "+506 8888-9999",
+  "current_step": 3
+}
+```
+
+**Errores:**
+| Código | Error | Causa |
+|--------|-------|-------|
+| `400` | `MISSING_FIELDS` | Falta alguno de los tres datos (lista en `missing`) |
+| `400` | `INVALID_WHATSAPP_CREDENTIALS` | Meta no aceptó el token, o el número no pertenece a ese WABA |
+| `401` | `INVALID_API_KEY` | Bearer token inválido |
+| `409` | `PHONE_ALREADY_CONNECTED` | El número ya está conectado a otra tienda; hay que desconectarlo de esa primero |
+| `500` | `WEBHOOK_REGISTRATION_FAILED` | No se pudo suscribir el webhook en Meta o guardar la conexión |
+
+Reconectar el mismo número en la misma tienda (por ejemplo, con un token nuevo) está permitido.
 
 ---
 
@@ -429,6 +478,8 @@ El plugin crea nuevas CK/CS programáticamente (mismo proceso que el Paso 2), la
 | `OAUTH_CODE_EXPIRED` | El código OAuth de Meta expiró o ya fue usado |
 | `META_PERMISSION_DENIED` | Meta rechazó los permisos de la app |
 | `WEBHOOK_REGISTRATION_FAILED` | Error al registrar el webhook en Meta |
+| `INVALID_WHATSAPP_CREDENTIALS` | Meta no aceptó los datos de la conexión directa de WhatsApp |
+| `PHONE_ALREADY_CONNECTED` | El número de WhatsApp ya está conectado a otra tienda |
 | `MCP_REGISTRATION_FAILED` | Error al registrar el tenant en el MCP Server |
 | `SETUP_INCOMPLETE` | No se completaron todos los pasos del wizard |
 | `ALREADY_ACTIVE` | El tenant ya está activo |
@@ -568,9 +619,9 @@ para ubicar la conversación; ahí sigue valiendo la verificación del lado del 
 ## Notas de implementación
 
 ### Plugin (PHP)
-- Generar API Key con `wp_generate_uuid4()` al activar el plugin
-- Guardar API Key en texto plano en `wp_options` (solo acceso local)
-- Guardar `tenant_id` y `api_key_hash` en `wp_chatbot_tenants`
+- Generar API Key con `wp_generate_uuid4()` la primera vez que un admin abre wp-admin (no al activar)
+- Guardar API Key en texto plano en `wp_options` (`chatbot_api_key_plain`, solo acceso local)
+- Guardar `tenant_id`, `api_key_hash` y el estado del wizard en `wp_options` (`chatbot_provision`)
 - Crear CK/CS de WooCommerce programáticamente con `wc_rand_hash()` en el Paso 2
 - Capturar CK/CS inmediatamente después de crearlas — WooCommerce solo guarda el hash después
 - Enviar CK/CS al backend en texto plano por HTTPS — nunca guardarlas localmente
@@ -578,13 +629,15 @@ para ubicar la conversación; ahí sigue valiendo la verificación del lado del 
 - Siempre enviar `Authorization: Bearer {api_key}` en texto plano — el backend hace el hash internamente
 
 ### Backend (Node.js)
-- Verificar API Key hasheando el Bearer recibido y comparando contra PostgreSQL
+- Verificar API Key hasheando el Bearer recibido y comparando contra DynamoDB (índice `api_key_hash-index`)
 - Cifrar CK/CS y tokens de WhatsApp con AES-256 antes de persistir
 - El `tenant_id` es generado en el backend (UUID v4), no en el plugin
-- Las transiciones de `current_step` son unidireccionales: 1→2→3→4→5
+- Las transiciones de `current_step` son unidireccionales: 1→2→3→4→5. Repetir un paso (reconectar
+  un canal, revalidar WooCommerce, guardar la configuración con el bot activo) no lo baja, y la
+  respuesta trae el paso que quedó guardado: los ejemplos de arriba muestran el caso de una tienda
+  nueva. El plugin aplica la misma regla a su copia local.
 - El endpoint `/activate` es idempotente — si ya está activo, devolver 200 OK
-- Al arrancar el MCP Server: cargar todos los tenants activos desde PostgreSQL al registro en memoria
-- Fallback lazy: si llega un request de un tenant no en memoria, consultarlo desde PostgreSQL
+- El MCP (Lambda) lee las credenciales de WooCommerce del tenant desde DynamoDB en cada request, sin registro en memoria
 
 ### Seguridad
 - Todo el tráfico por HTTPS — nunca HTTP

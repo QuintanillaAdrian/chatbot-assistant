@@ -49,14 +49,8 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
             } else {
                 WP_CLI::warning( 'Provisioning incompleto o con errores.' );
                 WP_CLI::line( '' );
-                $audit = get_option( 'chatbot_provision_audit', array() );
-                if ( ! empty( $audit ) ) {
-                    WP_CLI::line( 'Bitácora de eventos:' );
-                    foreach ( $audit as $entry ) {
-                        $level = strtoupper( $entry['level'] ?? 'info' );
-                        WP_CLI::line( sprintf( '  [%s] %s', $level, $entry['message'] ) );
-                    }
-                }
+                WP_CLI::line( 'Bitácora de eventos:' );
+                $this->audit( array(), array() );
             }
         }
 
@@ -85,6 +79,32 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
             WP_CLI::line( sprintf( 'wa_verified: %s', ! empty( $store['wa_verified'] ) ? 'true' : 'false' ) );
             if ( ! empty( $store['phone_number'] ) ) {
                 WP_CLI::line( sprintf( 'wa_phone: %s', $store['phone_number'] ) );
+            }
+        }
+
+        /**
+         * Muestra la bitácora del onboarding (últimos eventos, el más nuevo primero). Es la misma
+         * que el panel muestra solo en modo soporte (CHATBOT_DEBUG); acá no hace falta la constante.
+         *
+         * ## EXAMPLES
+         *     wp chatbot audit
+         *
+         * @subcommand audit
+         */
+        public function audit( $args, $assoc_args ) {
+            $audit = Chatbot_Assistant_Backend_Client::mask_secrets( Chatbot_Assistant_Provision::get_audit_log() );
+            if ( empty( $audit ) ) {
+                WP_CLI::line( 'La bitácora está vacía.' );
+                return;
+            }
+            foreach ( $audit as $entry ) {
+                WP_CLI::line( sprintf(
+                    '[%s] %s: %s%s',
+                    $entry['created_at'] ?? '',
+                    strtoupper( $entry['level'] ?? 'info' ),
+                    $entry['message'] ?? '',
+                    empty( $entry['context'] ) ? '' : ' ' . wp_json_encode( $entry['context'] )
+                ) );
             }
         }
 

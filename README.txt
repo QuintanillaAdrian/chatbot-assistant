@@ -1,89 +1,52 @@
-=== Plugin Name ===
-Contributors: (this should be a list of wordpress.org userid's)
-Donate link: https://portafolio-adrianquintanilla.vercel.app/
-Tags: comments, spam
-Requires at least: 3.0.1
-Tested up to: 3.4
-Stable tag: 4.3
+=== Chatbot Assistant ===
+Contributors: quintanilla
+Tags: woocommerce, whatsapp, chatbot, telegram
+Requires at least: 6.9
+Requires PHP: 8.2
+Stable tag: 1.0.1
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
-Automatiza el provisioning de WooCommerce y el envío de credenciales al MCP.
+Asistente de ventas por WhatsApp (o Telegram) para tiendas WooCommerce.
 
 == Description ==
 
-Plugin para generar credenciales de WooCommerce y enviar el resultado al MCP.
-Está pensado para que el instalador solo tenga que montar WordPress, activar WooCommerce y activar este plugin.
+Conecta la tienda con el Backend del chatbot. El cliente le escribe al bot, el bot consulta el
+catálogo real, arma links de compra, revisa pedidos y los puede cancelar.
 
-El plugin hace lo siguiente:
+El plugin:
 
-* En la activación intenta un único provisioning automático.
-* Genera `consumerKey` y `consumerSecret` de WooCommerce.
-* Guarda el secreto cifrado.
-* Envía el payload al MCP.
-* Permite reenvío manual desde el panel de administración.
-
-== Provisioning Flow ==
-
-Flujo de provisioning:
-
-* Al activar el plugin se ejecuta un intento automático único.
-* Si WooCommerce está disponible, se generan las credenciales de API.
-* El payload se envía al MCP.
-* El estado local se puede revisar en el panel de administración.
-
-Endpoint REST del plugin:
-
-El prefijo y host dependen del entorno y de la configuración de URLs del sitio
-
-* `POST /wp-json/shopia/v1/provision` 
-* `POST /index.php?rest_route=/shopia/v1/provision`
-* `POST */shopia/v1/provision`
-
-Ejemplo de body:
-
-```json
-{
-    "generate_keys": true,
-    "persist_secret": true
-}
-```
-
-Para pruebas locales se puede usar `test-provisioning.ps1` después de instalar y activar WooCommerce.
+* Registra la tienda en el Backend y le crea una clave de la API de WooCommerce (onboarding
+  automático, pasos 1 y 2, al abrir wp-admin por primera vez).
+* Ofrece un panel (wp-admin → Asistente Chatbot) para conectar WhatsApp o Telegram, personalizar
+  el bot y activarlo.
+* Atiende los links de compra que manda el bot (`/entrar/`, `/carrito/`, `/ir/`).
+* Le avisa al Backend cuando se crea un pedido.
 
 == Installation ==
 
-Instrucciones para el instalador:
+La guía completa (requisitos, HTTPS detrás de NGINX, WhatsApp, problemas comunes) está en
+`HOW_IT_WORKS.md`. En resumen:
 
-1. Instalar y activar WordPress.
-2. Instalar y activar WooCommerce.
-3. Copiar esta carpeta del plugin en `wp-content/plugins/shopia-chatbot-assistant`.
-4. Activar el plugin desde el admin o con WP-CLI.
-5. Verificar que el servidor permite salidas HTTPS y que PHP tiene OpenSSL habilitado.
-6. Confirmar permisos de base de datos sobre `wp_woocommerce_api_keys` o el prefijo que use la instalación.
-7. El MCP requiere autenticación, agregar la variable de entorno: `MCP_BEARER_TOKEN`.
+1. WordPress con WooCommerce activo, en HTTPS y con enlaces permanentes distintos de "Simple".
+2. Variable de entorno `CHATBOT_BACKEND_URL` en el servidor (la dirección del Backend).
+3. Copiar esta carpeta, **con `vendor/`** (o correr `composer install --no-dev`), a
+   `wp-content/plugins/chatbot-assistant` y activar el plugin.
+4. Abrir wp-admin → Asistente Chatbot y seguir los pasos 3 a 5.
 
-Comando opcional con WP-CLI:
+== Changelog ==
 
-```bash
-wp plugin activate shopia-chatbot-assistant
-```
+= 1.0.1 =
+* Limpieza: un solo script en el panel (antes "Guardar configuración" y "Activar" mandaban dos
+  pedidos al Backend), sin archivos públicos vacíos, sin la ruta anónima `/tenant/register`.
+* Formulario "Conexión directa" de WhatsApp.
+* Al desinstalar, borra sus opciones y la clave de WooCommerce que creó.
+* El log de PHP registra solo las llamadas al Backend que fallan (todas, con `WP_DEBUG`).
+* La información técnica del panel (estado y bitácora) solo se ve en modo soporte
+  (`CHATBOT_DEBUG` en `wp-config.php`), con las credenciales ocultas. Comando nuevo
+  `wp chatbot audit`.
+* El paso del onboarding ya no baja al reconectar un canal o guardar la configuración con el bot
+  activo.
 
-== Frequently Asked Questions ==
-
-= ¿Qué hacer ? =
-
-Solo instalar WordPress, WooCommerce y este plugin, activarlo y comprobar que el provisioning automático se ejecutó una vez.
-
-== Screenshots ==
-
-1. Panel de administración del plugin.
-2. Resultado del provisioning.
-
-Información útil para integración:
-
-* Ruta REST principal: `/shopia/v1/provision`
-* Método: `POST`
-* Cuerpo sugerido: `generate_keys=true` y `persist_secret=true`
-
-`<?php code(); // va entre comillas invertidas ?>`
+= 1.0.0 =
+* Primera versión.
