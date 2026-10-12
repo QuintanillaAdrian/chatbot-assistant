@@ -201,16 +201,13 @@ class Chatbot_Assistant_Public {
 	}
 
 	/**
-	 * Desarma el link corto de LOGIN (`/entrar/{token}`, ver comentario
-	 * largo junto a `buildLoginToken` en services/sales.ts, chatbot-backend
-	 * — Fix #3 de "me mostró pedidos que no son mios", pieza 3 de 3,
-	 * 2026-09-10). A diferencia de `/ir/{token}` (que agrega un producto al
-	 * carrito), este NO toca el carrito — loguea de verdad al navegador
-	 * como el cliente de WooCommerce que el bot ya resolvió/creó este
-	 * mismo turno (`wcCustomerId` en iniciarCompra), y recién ahí redirige
-	 * a donde diga `?next=` (siempre un link de compra `/ir/...` de este
-	 * mismo sistema, nunca una URL arbitraria — ver validación de
-	 * `$safe_next` abajo).
+	 * Desarma el link de compra (`/entrar/{token}`, ver buildCartLoginToken
+	 * en services/sales.ts, chatbot-backend — Fix #3 de "me mostró pedidos
+	 * que no son mios", pieza 3 de 3, 2026-09-10; token único desde el
+	 * 2026-10-04). Este pedido NO toca el carrito — loguea de verdad al
+	 * navegador como el cliente de WooCommerce que el bot ya resolvió/creó
+	 * (`wcCustomerId` en iniciarCompra), y redirige a `/carrito/{mismo token}`,
+	 * que agrega los productos en el pedido siguiente.
 	 *
 	 * Por qué esto resuelve la causa de fondo (no solo el síntoma que ya
 	 * cubren las Piezas 1 y 2): el checkout híbrido nunca loguea de verdad
@@ -228,23 +225,20 @@ class Chatbot_Assistant_Public {
 	 * con `wp_set_auth_cookie( $wc_customer_id )`, sin ningún mapeo
 	 * intermedio.
 	 *
-	 * Mismo mecanismo HMAC+hashids que los otros dos tokens de este
-	 * archivo, firma sobre `"{$wc_customer_id}:{$expires_at}"` — ver
-	 * comentario de buildLoginToken en sales.ts para el resto (por qué
-	 * hashids no es la seguridad real).
+	 * Mismo mecanismo HMAC+hashids que los otros tokens de este archivo
+	 * (ver link_is_valid): la firma cubre el cliente, el vencimiento, el lote,
+	 * el teléfono y cada producto (ver parse_cart_login_token). Hashids no es
+	 * la seguridad: la firma sí.
 	 *
-	 * **Un solo uso**: si el link se filtrara (reenviado, interceptado),
-	 * la ventana de riesgo real es que un tercero se loguee como ese
-	 * cliente — además del TTL corto (10 min, ver LOGIN_LINK_TTL_SECONDS
-	 * en sales.ts), un transient propio (`chatbot_login_used_...`, mismo
-	 * TTL) marca el token como ya usado tras el primer login exitoso; un
-	 * segundo intento con el MISMO token sigue redirigiendo a `next` (no
-	 * se le corta la compra al cliente legítimo por hacer doble clic) pero
-	 * YA NO vuelve a loguear a nadie.
+	 * Si el link se filtrara (reenviado, interceptado), la ventana de riesgo
+	 * real es que un tercero se loguee como ese cliente: lo acota el
+	 * vencimiento corto (10 min, LOGIN_LINK_TTL_SECONDS en sales.ts). El
+	 * marcador de "un solo uso" que había se quitó el 2026-10-04 (ver el
+	 * comentario dentro de la función).
 	 *
 	 * Chequeo de rol `customer` antes de loguear: defensa en profundidad,
 	 * no la protección real (la firma HMAC ya impide que alguien sin
-	 * `api_key_hash` fabrique un token con OTRO wc_customer_id — solo
+	 * el secreto de links fabrique un token con OTRO wc_customer_id — solo
 	 * protege contra el caso raro de que ese id apunte a una cuenta que ya
 	 * no es de cliente, ej. un admin, sin tener que confiar en que nunca
 	 * pase).
@@ -267,28 +261,22 @@ class Chatbot_Assistant_Public {
 		}
 		$token = $matches[1];
 
-		$store        = get_option( Chatbot_Assistant_Provision::OPTION_KEY, array() );
-		$api_key_hash = $store['api_key_hash'] ?? '';
+		$link_secret = Chatbot_Assistant_Provision::link_secret();
 
-		if ( empty( $api_key_hash ) ) {
+		if ( '' === $link_secret ) {
 			// Tenant sin provisionar todavía — no hay con qué validar, se
 			// deja pasar en vez de romper el flujo (mismo criterio que los
-			// otros dos manejadores de token de este archivo).
+			// otros manejadores de token de este archivo).
 			return;
 		}
 
-		$hashids = new \Hashids\Hashids( $api_key_hash, 6 );
+		$hashids = new \Hashids\Hashids( $link_secret, 6 );
 		$decoded = $hashids->decode( $token );
 
-		// Fix (2026-10-03, hallazgo colateral): el token ahora trae un nonce como
-		// cuarto número (ver buildLoginToken en services/sales.ts), así que dos
-		// links del mismo segundo ya no son idénticos. Se aceptan los dos
-		// formatos: 4 números (nuevo, el nonce entra en la firma) y 3 números
-		// (tokens emitidos antes de este cambio, firma sin nonce). Cualquier
-		// otra longitud se rechaza, incluidas las de /ir/ (6 y 7).
-		// Token único de compra (2026-10-04): login + carrito juntos, sin `?next=`.
-		// Ver parse_cart_login_token. Se prueba PRIMERO por ser el formato nuevo; si no
-		// tiene esa forma, se cae a los dos formatos de login de siempre.
+		// Token único de compra (2026-10-04): login + carrito juntos. Ver
+		// parse_cart_login_token. Es el único formato de `/entrar/` desde S7 (2026-10-11):
+		// los de antes (login de 3 o 4 números con `?next=`) los firmaba el secreto viejo,
+		// así que ya no podrían validar, y el Backend no los arma desde el 2026-10-04.
 		//
 		// OJO, decisión deliberada: acá NO se agregan los productos al carrito. Eso sigue
 		// pasando en el pedido SIGUIENTE (`/carrito/`). WooCommerce arma la sesión del
@@ -297,37 +285,16 @@ class Chatbot_Assistant_Public {
 		// este mismo handler está por borrar, y el cliente llegaría al checkout con el
 		// carrito vacío. Lo que se unificó es el TOKEN, no los dos pedidos.
 		$cart_login = $this->parse_cart_login_token( $decoded );
-		if ( $cart_login ) {
-			$wc_customer_id      = $cart_login['wc_customer_id'];
-			$expires_at          = $cart_login['expires_at'];
-			$signature_truncated = $cart_login['signature_truncated'];
-			$signed_message      = $cart_login['signed_message'];
-		} elseif ( 4 === count( $decoded ) ) {
-			list( $wc_customer_id, $expires_at, $signature_truncated, $nonce ) = $decoded;
-			$signed_message = "{$wc_customer_id}:{$expires_at}:{$nonce}";
-		} elseif ( 3 === count( $decoded ) ) {
-			list( $wc_customer_id, $expires_at, $signature_truncated ) = $decoded;
-			$signed_message = "{$wc_customer_id}:{$expires_at}";
-		} else {
+		if ( ! $cart_login ) {
 			$this->reject_checkout_link( 'Este link de acceso no es válido.' );
 			return;
 		}
+		$wc_customer_id = $cart_login['wc_customer_id'];
 
-		if ( ! self::link_is_valid( $signed_message, $signature_truncated, $expires_at, $api_key_hash ) ) {
+		if ( ! self::link_is_valid( $cart_login['signed_message'], $cart_login['signature'], $cart_login['expires_at'], $link_secret ) ) {
 			$this->reject_checkout_link( 'Este link de acceso ya venció.' );
 			return;
 		}
-
-		// `next` tiene que ser un link de compra PROPIO (`/ir/...`) — nunca
-		// una URL de otro dominio. home_url() de por sí ya antepone el
-		// dominio real de esta tienda sin importar qué venga en $path (ver
-		// get_home_url() en WordPress core), pero esta validación evita
-		// además cualquier destino sin sentido si `next` viene vacío,
-		// corrupto, o manipulado — se cae a `/checkout/` en ese caso.
-		$next_param = isset( $_GET['next'] ) ? sanitize_text_field( wp_unslash( $_GET['next'] ) ) : '';
-		// Compra en un solo link (2026-10-03): además de `/ir/` (un producto), el
-		// destino puede ser `/carrito/` (todos los productos de la compra).
-		$safe_next  = preg_match( '#^/(?:ir|carrito)/[A-Za-z0-9]+(?:\?[A-Za-z0-9%._=&+-]*)?$#', $next_param ) ? $next_param : '/checkout/';
 
 		// Fix (2026-10-04, medido en Docker con dos navegadores): antes había acá un
 		// transient `chatbot_login_used_{md5(token)}` que marcaba el token como usado
@@ -405,27 +372,10 @@ class Chatbot_Assistant_Public {
 			// armar y el marcador `chatbot_last_clear_batch` (ver
 			// maybe_clear_cart_before_add) — así el último link que se abría
 			// dejaba solo su producto. Ahora la limpieza corre UNA sola vez por
-			// lote de compra (`batch`, que es el turno del bot): los links
-			// hermanos de la misma compra la saltean y conservan el carrito.
-			// Sin lote (link viejo, anterior a este cambio), se mantiene el
-			// comportamiento de siempre: limpiar en cada login.
-			// Con el token único el lote ya viene adentro del token; con los links
-			// viejos (dos tokens) hay que sacarlo del destino `next`.
-			$batch = 0;
-			if ( $cart_login ) {
-				$batch = $cart_login['batch_epoch_ms'];
-			} elseif ( preg_match( '#^/ir/([A-Za-z0-9]+)#', $safe_next, $next_matches ) ) {
-				$next_decoded = ( new \Hashids\Hashids( $api_key_hash, 6 ) )->decode( $next_matches[1] );
-				// Mismo orden posicional que maybe_expand_short_checkout_link:
-				// [productId, quantity, expiresAt, limpiarFlag, batchEpochMs, variationId, sig].
-				// Los tokens de 6 números son de editarCarritoPendiente y no tienen lote.
-				$batch = ( 7 === count( $next_decoded ) ) ? (int) $next_decoded[4] : 0;
-			} elseif ( preg_match( '#^/carrito/([A-Za-z0-9]+)#', $safe_next, $cart_matches ) ) {
-				// Token de compra completa (ver maybe_add_cart_from_link):
-				// [expiresAt, limpiarFlag, batchEpochMs, sig, n, ...]. El lote es el 3er número.
-				$cart_decoded = ( new \Hashids\Hashids( $api_key_hash, 6 ) )->decode( $cart_matches[1] );
-				$batch        = ( count( $cart_decoded ) >= 6 ) ? (int) $cart_decoded[2] : 0;
-			}
+			// lote de compra (`batch`, que es el turno del bot, y viene firmado
+			// adentro del token): los links hermanos de la misma compra la
+			// saltean y conservan el carrito.
+			$batch = $cart_login['batch_epoch_ms'];
 
 			// Sin lote se usa el token como clave (2026-10-04): antes, un link sin
 			// lote se apoyaba en el marcador de "ya usado" para no volver a vaciar
@@ -445,10 +395,9 @@ class Chatbot_Assistant_Public {
 			}
 		}
 
-		// Con el token único el destino lo arma el código: el MISMO token sirve para la
-		// ruta `/carrito/`, que es la que agrega los productos en el pedido siguiente.
-		// Con los links viejos se respeta el `next` ya validado más arriba.
-		wp_safe_redirect( home_url( $cart_login ? '/carrito/' . $token : $safe_next ) );
+		// El destino lo arma el código: el MISMO token sirve para la ruta `/carrito/`,
+		// que es la que agrega los productos en el pedido siguiente.
+		wp_safe_redirect( home_url( '/carrito/' . $token ) );
 		exit;
 
 	}
@@ -459,15 +408,11 @@ class Chatbot_Assistant_Public {
 	 * sesión del cliente. Reemplaza al link por producto: cada link abierto en otro
 	 * navegador armaba su propio carrito y reemplazaba al anterior (bug real).
 	 *
-	 * Acepta DOS formatos de token (2026-10-04):
-	 * - Token único de compra (nuevo): lo arma buildCartLoginToken y lleva también el
-	 *   cliente y el nonce del login, porque el link ya no tiene `?next=`. Ver
-	 *   parse_cart_login_token. A esta ruta se llega por el redirect de `/entrar/`.
-	 * - Solo carrito (anterior, sigue vivo para links ya enviados): buildCartToken,
-	 *   [expiresAt, limpiarFlag, batchEpochMs, sigTruncada, phone, n,
-	 *   (productId, quantity, variationId) x n].
-	 * En los dos casos la firma cubre expiración, limpiar, lote, teléfono y cada
-	 * producto, cantidad y variación.
+	 * El token es el único de compra (lo arma buildCartLoginToken y lleva también el
+	 * cliente y el nonce del login; ver parse_cart_login_token). A esta ruta se llega
+	 * por el redirect de `/entrar/`. La firma cubre expiración, limpiar, lote,
+	 * teléfono y cada producto, cantidad y variación. El formato de solo carrito que
+	 * convivía con este se quitó con S7 (2026-10-11).
 	 *
 	 * Reglas:
 	 * - limpiar=1 vacía el carrito UNA sola vez por lote (mismo criterio que
@@ -488,62 +433,27 @@ class Chatbot_Assistant_Public {
 			return;
 		}
 
-		$store        = get_option( Chatbot_Assistant_Provision::OPTION_KEY, array() );
-		$api_key_hash = $store['api_key_hash'] ?? '';
-		if ( empty( $api_key_hash ) ) {
+		$link_secret = Chatbot_Assistant_Provision::link_secret();
+		if ( '' === $link_secret ) {
 			return;
 		}
 
-		$decoded = ( new \Hashids\Hashids( $api_key_hash, 6 ) )->decode( $matches[1] );
-		// Dos formatos vivos a propósito (2026-10-04): el token único de compra
-		// (login + carrito, 8 + 3n números, ver parse_cart_login_token) y el de solo
-		// carrito de antes (6 + 3n). Un link ya enviado tiene que seguir funcionando, así
-		// que el formato viejo no se toca. Acá el login ya ocurrió en el pedido anterior
-		// (`/entrar/`), así que los dos caminos terminan haciendo exactamente lo mismo:
-		// vaciar por lote si corresponde, agregar los productos y mandar al checkout.
-		$cart_login = $this->parse_cart_login_token( $decoded );
-		if ( $cart_login ) {
-			$expires_at          = $cart_login['expires_at'];
-			$limpiar_flag        = $cart_login['limpiar_flag'];
-			$batch_epoch_ms      = $cart_login['batch_epoch_ms'];
-			$signature_truncated = $cart_login['signature_truncated'];
-			$phone_digits        = $cart_login['phone_digits'];
-			$items               = $cart_login['items'];
-			$signed_message      = $cart_login['signed_message'];
-		} else {
-			if ( count( $decoded ) < 6 ) {
-				$this->reject_checkout_link( 'Este link de compra no es válido.' );
-				return;
-			}
-
-			// Los seis primeros números son fijos (el teléfono va en el token desde
-			// 2026-10-03); después vienen 3 por producto.
-			list( $expires_at, $limpiar_flag, $batch_epoch_ms, $signature_truncated, $phone_digits, $count ) = $decoded;
-			if ( count( $decoded ) !== 6 + 3 * $count ) {
-				$this->reject_checkout_link( 'Este link de compra no es válido.' );
-				return;
-			}
-
-			$items           = array();
-			$canonical_parts = array();
-			for ( $i = 0; $i < $count; $i++ ) {
-				$product_id   = (int) $decoded[ 6 + 3 * $i ];
-				$quantity     = (int) $decoded[ 7 + 3 * $i ];
-				$variation_id = (int) $decoded[ 8 + 3 * $i ];
-				$items[]           = array(
-					'product_id'   => $product_id,
-					'quantity'     => $quantity,
-					'variation_id' => $variation_id,
-				);
-				$canonical_parts[] = "{$product_id}:{$quantity}:{$variation_id}";
-			}
-			$canonical = implode( ',', $canonical_parts );
-
-			// Misma forma de firma que buildCartToken en services/sales.ts (prefijo "cart:").
-			$signed_message = "cart:{$expires_at}:{$limpiar_flag}:{$batch_epoch_ms}:{$phone_digits}:{$canonical}";
+		// Un solo formato: el token único de compra (login + carrito, ver
+		// parse_cart_login_token). El de solo carrito de antes dejó de existir con S7
+		// (2026-10-11): lo firmaba el secreto viejo. Acá el login ya ocurrió en el pedido
+		// anterior (`/entrar/`): se vacía por lote si corresponde, se agregan los productos
+		// y se manda al checkout.
+		$cart_login = $this->parse_cart_login_token( ( new \Hashids\Hashids( $link_secret, 6 ) )->decode( $matches[1] ) );
+		if ( ! $cart_login ) {
+			$this->reject_checkout_link( 'Este link de compra no es válido.' );
+			return;
 		}
+		$limpiar_flag   = $cart_login['limpiar_flag'];
+		$batch_epoch_ms = $cart_login['batch_epoch_ms'];
+		$phone_digits   = $cart_login['phone_digits'];
+		$items          = $cart_login['items'];
 
-		if ( ! self::link_is_valid( $signed_message, $signature_truncated, $expires_at, $api_key_hash ) ) {
+		if ( ! self::link_is_valid( $cart_login['signed_message'], $cart_login['signature'], $cart_login['expires_at'], $link_secret ) ) {
 			$this->reject_checkout_link( 'Este link de compra ya venció.' );
 			return;
 		}
@@ -600,17 +510,17 @@ class Chatbot_Assistant_Public {
 	 * pero OJO: no es cifrado ni firma — cualquiera que conozca el
 	 * algoritmo (es público) puede desarmarlo sin el `salt`. La seguridad
 	 * real sigue siendo el mismo HMAC-SHA256 de siempre: el token trae la
-	 * firma truncada a 40 bits (10 hex) como último número empaquetado —
-	 * acá se recalcula el HMAC completo con la MISMA copia de
-	 * `api_key_hash` que ya usa maybe_reject_expired_checkout_link, y se
-	 * compara la propia versión truncada contra la que venía en el token.
+	 * firma truncada a 64 bits en los dos últimos números (ver link_is_valid)
+	 * — acá se recalcula el HMAC completo con el mismo secreto de links que
+	 * usa maybe_reject_expired_checkout_link, y se compara la propia versión
+	 * truncada contra la que venía en el token.
 	 * Si alguien arma un token con productId/quantity/exp inventados, no
 	 * puede producir la firma correcta porque no tiene el secreto — se
 	 * rechaza igual que un link largo adulterado.
 	 *
 	 * El array que devuelve decode() es POSICIONAL, tiene que coincidir
 	 * exacto con buildCheckoutToken() en sales.ts:
-	 * [productId, quantity, expiresAt, limpiarCarritoFlag, batchEpochMs, variationId, sigTruncada]
+	 * [productId, quantity, expiresAt, limpiarCarritoFlag, batchEpochMs, variationId, firmaAlta, firmaBaja]
 	 *
 	 * `variationId` (0 = producto simple, sin variación elegida) viaja DENTRO
 	 * del mensaje firmado — no alcanza con que esté en el token nomás, si no
@@ -648,43 +558,43 @@ class Chatbot_Assistant_Public {
 		}
 		$token = $matches[1];
 
-		$store        = get_option( Chatbot_Assistant_Provision::OPTION_KEY, array() );
-		$api_key_hash = $store['api_key_hash'] ?? '';
+		$link_secret = Chatbot_Assistant_Provision::link_secret();
 
-		if ( empty( $api_key_hash ) ) {
+		if ( '' === $link_secret ) {
 			// Tenant sin provisionar todavía — no hay con qué validar, se
 			// deja pasar en vez de romper el flujo por un estado que no
 			// debería darse en producción.
 			return;
 		}
 
-		$hashids = new \Hashids\Hashids( $api_key_hash, 6 );
+		$hashids = new \Hashids\Hashids( $link_secret, 6 );
 		$decoded = $hashids->decode( $token );
 
-		// Token de 6 números = una acción de editarCarritoPendiente (2026-09-05,
-		// ver buildCartEditToken en services/sales.ts), no una compra. Hashids
+		// Token de 7 números = una acción de editarCarritoPendiente (2026-09-05,
+		// ver buildCartEditToken en services/sales.ts), no una compra (8). Hashids
 		// conserva la cantidad exacta de números empaquetados, así que la
 		// longitud del array decodificado alcanza para distinguir los dos tipos
-		// de token sin necesitar un prefijo de URL aparte.
-		if ( 6 === count( $decoded ) ) {
-			$this->apply_cart_edit_token( $decoded, $api_key_hash );
+		// de token sin necesitar un prefijo de URL aparte. (Eran 6 y 7 hasta S8,
+		// 2026-10-11, que partió la firma en dos números.)
+		if ( 7 === count( $decoded ) ) {
+			$this->apply_cart_edit_token( $decoded, $link_secret );
 			return;
 		}
 
-		if ( count( $decoded ) !== 7 ) {
+		if ( count( $decoded ) !== 8 ) {
 			$this->reject_checkout_link( 'Este link de compra no es válido.' );
 			return;
 		}
 
-		list( $product_id, $quantity, $expires_at, $limpiar_flag, $batch_epoch_ms, $variation_id, $signature_truncated ) = $decoded;
+		list( $product_id, $quantity, $expires_at, $limpiar_flag, $batch_epoch_ms, $variation_id, $signature_high, $signature_low ) = $decoded;
 
 		$signed_message = "{$product_id}:{$quantity}:{$expires_at}:{$variation_id}";
-		if ( ! self::link_is_valid( $signed_message, $signature_truncated, $expires_at, $api_key_hash ) ) {
+		if ( ! self::link_is_valid( $signed_message, array( $signature_high, $signature_low ), $expires_at, $link_secret ) ) {
 			$this->reject_checkout_link( 'Este link de compra ya venció.' );
 			return;
 		}
 		// La URL larga lleva la firma completa: la vuelve a validar maybe_reject_expired_checkout_link.
-		$expected_signature = self::link_signature( $signed_message, $api_key_hash );
+		$expected_signature = self::link_signature( $signed_message, $link_secret );
 
 		// Reconstruye la URL larga de siempre — arma el MISMO formato que
 		// armaba services/sales.ts antes de este cambio, así el resto del
@@ -733,15 +643,15 @@ class Chatbot_Assistant_Public {
 	 * criterio que en el token de compra.
 	 *
 	 * @since 1.3.0
-	 * @param array  $decoded      [action_type, product_id, variation_id, value, expires_at, signature_truncada].
-	 * @param string $api_key_hash Secreto compartido con chatbot-backend (mismo que usa el resto de esta clase).
+	 * @param array  $decoded     [action_type, product_id, variation_id, value, expires_at, firma_alta, firma_baja].
+	 * @param string $link_secret Secreto compartido con chatbot-backend (Chatbot_Assistant_Provision::link_secret).
 	 */
-	private function apply_cart_edit_token( $decoded, $api_key_hash ) {
+	private function apply_cart_edit_token( $decoded, $link_secret ) {
 
-		list( $action_type, $product_id, $variation_id, $value, $expires_at, $signature_truncated ) = $decoded;
+		list( $action_type, $product_id, $variation_id, $value, $expires_at, $signature_high, $signature_low ) = $decoded;
 
 		$signed_message = "{$action_type}:{$product_id}:{$variation_id}:{$value}:{$expires_at}";
-		if ( ! self::link_is_valid( $signed_message, $signature_truncated, $expires_at, $api_key_hash ) ) {
+		if ( ! self::link_is_valid( $signed_message, array( $signature_high, $signature_low ), $expires_at, $link_secret ) ) {
 			$this->reject_checkout_link( 'Este link ya venció.' );
 			return;
 		}
@@ -775,13 +685,9 @@ class Chatbot_Assistant_Public {
 	/**
 	 * Rechaza un link de checkout del bot (add-to-cart con `exp`/`sig`) si
 	 * venció o si la firma no coincide — ver services/sales.ts en
-	 * chatbot-backend, que arma `exp`/`sig` con HMAC-SHA256 usando
-	 * `api_key_hash` como secreto compartido. No hace falta provisionar
-	 * ningún secreto nuevo: los dos lados YA lo conocen (el Backend lo
-	 * guarda como tenant.api_key_hash, este plugin lo calcula localmente al
-	 * registrar el tenant y ya lo usa para autenticar los webhooks del
-	 * Backend hacia acá, ver
-	 * Chatbot_Assistant_Provision::backend_webhook_permission_check).
+	 * chatbot-backend, que arma `exp`/`sig` con HMAC-SHA256 usando el
+	 * secreto de links de la tienda (Chatbot_Assistant_Provision::link_secret,
+	 * el mismo que autentica los avisos del Backend hacia acá).
 	 *
 	 * Antes, un link de checkout armado por el bot quedaba válido PARA
 	 * SIEMPRE — un cliente que volvía a tocar un link viejo de una
@@ -816,17 +722,16 @@ class Chatbot_Assistant_Public {
 		$variation_id = isset( $_GET['variation_id'] ) ? absint( $_GET['variation_id'] ) : 0;
 		$signature    = sanitize_text_field( wp_unslash( $_GET['sig'] ) );
 
-		$store        = get_option( Chatbot_Assistant_Provision::OPTION_KEY, array() );
-		$api_key_hash = $store['api_key_hash'] ?? '';
+		$link_secret = Chatbot_Assistant_Provision::link_secret();
 
-		if ( empty( $api_key_hash ) ) {
+		if ( '' === $link_secret ) {
 			// Tenant sin provisionar todavía — no hay con qué validar, se
 			// deja pasar en vez de romper el flujo por un estado que no
 			// debería darse en producción.
 			return;
 		}
 
-		if ( self::link_is_valid( "{$product_id}:{$quantity}:{$expires_at}:{$variation_id}", $signature, $expires_at, $api_key_hash, false ) ) {
+		if ( self::link_is_valid( "{$product_id}:{$quantity}:{$expires_at}:{$variation_id}", $signature, $expires_at, $link_secret, false ) ) {
 			return;
 		}
 
@@ -835,40 +740,56 @@ class Chatbot_Assistant_Public {
 	}
 
 	/**
-	 * Firma de un link del bot: HMAC-SHA256 del mensaje con `api_key_hash` como secreto compartido.
-	 * Misma fórmula que truncatedLinkSignature en services/sales.ts del Backend (antes de truncar). Hasta el 2026-10-10 estaba
-	 * escrita a mano en cada uno de los cinco manejadores de links (L1 en PLAN_DE_CORRECCIONES.md
-	 * del Backend).
+	 * Vencimiento más lejano que se acepta en un link, en segundos desde ahora (S8, 2026-10-11).
+	 *
+	 * El Backend arma links que vencen a los 10 minutos (LOGIN_LINK_TTL_SECONDS) o a los 45
+	 * (CHECKOUT_LINK_TTL_SECONDS, en services/sales.ts). Antes se aceptaba cualquier vencimiento
+	 * futuro: quien quisiera falsificar un link podía ponerle uno en el año 2100 y probar firmas
+	 * sin apuro. Una hora cubre los 45 minutos más un margen por diferencias de reloj entre el
+	 * Backend y esta tienda. Si el Backend alarga algún vencimiento, hay que subir esto también.
+	 */
+	const LINK_MAX_TTL = HOUR_IN_SECONDS;
+
+	/**
+	 * Firma de un link del bot: HMAC-SHA256 del mensaje con el secreto de links de la tienda
+	 * (S7, Chatbot_Assistant_Provision::link_secret). Misma fórmula que truncatedLinkSignature en
+	 * services/sales.ts del Backend (antes de truncar). Hasta el 2026-10-10 estaba escrita a mano en
+	 * cada uno de los cinco manejadores de links (L1 en PLAN_DE_CORRECCIONES.md del Backend).
 	 *
 	 * @param string $signed_message Lo que firma el Backend (cada tipo de link arma el suyo).
-	 * @param string $api_key_hash   Secreto compartido con el Backend.
+	 * @param string $link_secret    Secreto compartido con el Backend.
 	 * @return string Firma completa, en hex.
 	 */
-	private static function link_signature( $signed_message, $api_key_hash ) {
-		return hash_hmac( 'sha256', $signed_message, $api_key_hash );
+	private static function link_signature( $signed_message, $link_secret ) {
+		return hash_hmac( 'sha256', $signed_message, $link_secret );
 	}
 
 	/**
 	 * ¿El link es auténtico y no venció?
 	 *
-	 * Los tokens de hashids (`/entrar/`, `/carrito/`, `/ir/`, edición) llevan la firma truncada: los
-	 * primeros 10 hex como número (40 bits, S8 del plan; cambiar el largo se hace acá y en
-	 * truncatedLinkSignature del Backend). La URL larga de checkout (`&sig=`) lleva la firma completa.
-	 * La comparación es en tiempo constante.
+	 * Los tokens de hashids (`/entrar/`, `/carrito/`, `/ir/`, edición) llevan la firma truncada a
+	 * 64 bits como DOS números: los primeros 8 hex y los 8 siguientes (S8; hasta el 2026-10-11 eran
+	 * 10 hex en un solo número, 40 bits). Cambiar el largo se hace acá y en truncatedLinkSignature del
+	 * Backend. La URL larga de checkout (`&sig=`) lleva la firma completa. La comparación es en tiempo
+	 * constante. El vencimiento tiene que ser futuro y no más lejano que LINK_MAX_TTL.
 	 *
-	 * @param string     $signed_message Lo que firma el Backend.
-	 * @param string|int $signature      La firma que trajo el link.
-	 * @param int        $expires_at     Vencimiento (epoch en segundos).
-	 * @param string     $api_key_hash   Secreto compartido con el Backend.
-	 * @param bool       $truncated      true = firma de token (truncada); false = firma completa.
+	 * @param string       $signed_message Lo que firma el Backend.
+	 * @param array|string $signature      Token: [mitad alta, mitad baja]. URL larga: la firma en hex.
+	 * @param int          $expires_at     Vencimiento (epoch en segundos).
+	 * @param string       $link_secret    Secreto compartido con el Backend.
+	 * @param bool         $truncated      true = firma de token (truncada); false = firma completa.
 	 * @return bool
 	 */
-	private static function link_is_valid( $signed_message, $signature, $expires_at, $api_key_hash, $truncated = true ) {
-		$expected = self::link_signature( $signed_message, $api_key_hash );
+	private static function link_is_valid( $signed_message, $signature, $expires_at, $link_secret, $truncated = true ) {
+		$expected = self::link_signature( $signed_message, $link_secret );
 		if ( $truncated ) {
-			$expected = (string) hexdec( substr( $expected, 0, 10 ) );
+			$expected  = hexdec( substr( $expected, 0, 8 ) ) . ':' . hexdec( substr( $expected, 8, 8 ) );
+			$signature = is_array( $signature ) ? implode( ':', $signature ) : '';
 		}
-		return hash_equals( $expected, (string) $signature ) && time() <= (int) $expires_at;
+		$now = time();
+		return hash_equals( $expected, (string) $signature )
+			&& $now <= (int) $expires_at
+			&& (int) $expires_at <= $now + self::LINK_MAX_TTL;
 	}
 
 	/**
@@ -880,10 +801,8 @@ class Chatbot_Assistant_Public {
 	 * handler de `/entrar/`, así que el cliente ve `{sitio}/entrar/{token}` y nada más.
 	 *
 	 * Layout (services/sales.ts, buildCartLoginToken): [wc_customer_id, expires_at,
-	 * limpiar, batch, sigTruncada, nonce, phone, n, (productId, quantity, variationId) x n].
-	 * Son 8 + 3n números, 11 como mínimo. No se confunde con los formatos viejos: el de
-	 * login tiene 3 o 4 números, y el de carrito 6 + 3n (que deja resto 0 al dividir por
-	 * 3, mientras este deja resto 2).
+	 * limpiar, batch, firma_alta, firma_baja, nonce, phone, n, (productId, quantity, variationId) x n].
+	 * Son 9 + 3n números, 12 como mínimo (8 + 3n hasta S8, 2026-10-11, que partió la firma en dos).
 	 *
 	 * La firma cubre todo junto, incluido A QUÉ CLIENTE entra el link: nadie puede
 	 * agarrar un token y cambiarle la cuenta, el lote, el teléfono ni los productos.
@@ -894,21 +813,21 @@ class Chatbot_Assistant_Public {
 	 */
 	private function parse_cart_login_token( $decoded ) {
 		$total = count( $decoded );
-		if ( $total < 11 || 2 !== $total % 3 ) {
+		if ( $total < 12 ) {
 			return false;
 		}
 
-		list( $wc_customer_id, $expires_at, $limpiar_flag, $batch_epoch_ms, $signature_truncated, $nonce, $phone_digits, $item_count ) = $decoded;
-		if ( $total !== 8 + 3 * (int) $item_count ) {
+		list( $wc_customer_id, $expires_at, $limpiar_flag, $batch_epoch_ms, $signature_high, $signature_low, $nonce, $phone_digits, $item_count ) = $decoded;
+		if ( $total !== 9 + 3 * (int) $item_count ) {
 			return false;
 		}
 
 		$items           = array();
 		$canonical_parts = array();
 		for ( $i = 0; $i < (int) $item_count; $i++ ) {
-			$product_id   = (int) $decoded[ 8 + 3 * $i ];
-			$quantity     = (int) $decoded[ 9 + 3 * $i ];
-			$variation_id = (int) $decoded[ 10 + 3 * $i ];
+			$product_id   = (int) $decoded[ 9 + 3 * $i ];
+			$quantity     = (int) $decoded[ 10 + 3 * $i ];
+			$variation_id = (int) $decoded[ 11 + 3 * $i ];
 
 			$items[]           = array(
 				'product_id'   => $product_id,
@@ -924,7 +843,7 @@ class Chatbot_Assistant_Public {
 			'expires_at'          => (int) $expires_at,
 			'limpiar_flag'        => (int) $limpiar_flag,
 			'batch_epoch_ms'      => (int) $batch_epoch_ms,
-			'signature_truncated' => $signature_truncated,
+			'signature'           => array( $signature_high, $signature_low ),
 			'phone_digits'        => (int) $phone_digits,
 			'items'               => $items,
 			'signed_message'      => "cartlogin:{$wc_customer_id}:{$expires_at}:{$limpiar_flag}:{$batch_epoch_ms}:{$nonce}:{$phone_digits}:{$canonical}",

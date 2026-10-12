@@ -283,13 +283,19 @@ paso. Alcanza con un canal (WhatsApp o Telegram) para activar el bot.
 
 | Función | Cómo |
 |---|---|
-| **Links de compra** | `/entrar/{token}` inicia sesión como el cliente; `/carrito/{token}` carga todos los productos de la compra; `/ir/{token}` agrega o cambia un producto. Los arma el Backend; el plugin los valida (firma con la API key, vencimiento) y los ejecuta. |
+| **Links de compra** | `/entrar/{token}` inicia sesión como el cliente; `/carrito/{token}` carga todos los productos de la compra; `/ir/{token}` agrega o cambia un producto. Los arma el Backend; el plugin los valida (firma de 64 bits con el secreto de links, vencimiento futuro y de no más de una hora) y los ejecuta. |
 | **Aviso de pedido nuevo** | Al crearse un pedido (checkout clásico o de bloques, o pago completado) avisa al Backend, que borra el carrito pendiente de esa conversación. |
 | **Búsqueda por teléfono** | `GET /wp-json/chatbot/v1/customers/lookup-by-phone` y `/orders/lookup-by-phone`: el Backend identifica al cliente y sus pedidos (también los de invitado). Compatible con HPOS y con el almacenamiento clásico. |
 | **Webhooks de estado** | `POST /wp-json/chatbot/v1/webhook/backend`: el Backend avisa activación, suspensión, credenciales inválidas, etc. |
 
-Las rutas que llama el Backend se autentican con `Authorization: Bearer <api_key_hash>`; las del
+Las rutas que llama el Backend se autentican con `Authorization: Bearer <secreto de links>`; las del
 panel, con la sesión de administrador de WordPress.
+
+**El secreto de links** (desde la 1.0.2) firma los links y autentica al Backend ante la tienda. No se
+configura ni viaja por la red: el plugin y el Backend lo calculan cada uno a partir de la API key de
+la tienda (`Chatbot_Assistant_Provision::link_secret`). El Backend lo guarda cifrado la primera vez
+que el plugin le hace un pedido, que pasa en el paso 2 del onboarding o al abrir wp-admin. Si el bot
+no puede armar links ("sin link_secret_enc" en el log del Backend), alcanza con abrir wp-admin una vez.
 
 **Al desinstalar** (Plugins → Borrar), el plugin borra sus opciones y la clave de WooCommerce que
 creó. No da de baja la tienda en el Backend: eso se pide a Adrian. Desactivarlo no borra nada.

@@ -120,20 +120,37 @@ class Chatbot_Assistant_Provision {
     }
 
     /**
+     * Secreto compartido con el Backend para firmar los links del bot y para que el Backend se
+     * identifique ante esta tienda (S7 del PLAN_DE_CORRECCIONES.md del Backend, 2026-10-11).
+     *
+     * Se DERIVA de la clave de la tienda con la misma receta que deriveLinkSecret en
+     * services/crypto.ts del Backend (HMAC-SHA256 con la clave como llave y una etiqueta fija):
+     * los dos lados llegan al mismo secreto sin mandarlo nunca por la red. El Backend lo guarda
+     * cifrado la primera vez que esta tienda le hace un pedido autenticado. Hasta S7 era el
+     * `api_key_hash`, que el Backend guarda en claro: quien leyera esa tabla podía fabricar links
+     * de acceso a las cuentas de los clientes.
+     *
+     * @return string Secreto en hex, o '' si la tienda todavía no tiene clave.
+     */
+    public static function link_secret() {
+        $api_key = get_option( 'chatbot_api_key_plain', '' );
+        return '' === $api_key ? '' : hash_hmac( 'sha256', 'chatbot-link-secret-v1', $api_key );
+    }
+
+    /**
      * Permission check for Backend webhook notifications.
-     * El Backend envía Authorization: Bearer <api_key_hash> (SHA-256 de la API key).
-     * Comparamos contra el hash almacenado localmente — nunca contra el plaintext.
+     * El Backend envía Authorization: Bearer <secreto de links> (ver link_secret()).
      */
     public static function backend_webhook_permission_check( $request ) {
-        $store = get_option( self::OPTION_KEY, array() );
-        if ( empty( $store['api_key_hash'] ) ) {
+        $link_secret = self::link_secret();
+        if ( '' === $link_secret ) {
             return new WP_Error( 'rest_forbidden', 'Tenant not configured', array( 'status' => 403 ) );
         }
 
-        $auth_header = $request->get_header( 'authorization' );
+        $auth_header = (string) $request->get_header( 'authorization' );
         $token       = str_replace( 'Bearer ', '', $auth_header );
 
-        if ( hash_equals( $store['api_key_hash'], $token ) ) {
+        if ( hash_equals( $link_secret, $token ) ) {
             return true;
         }
 
@@ -309,7 +326,6 @@ class Chatbot_Assistant_Provision {
             $store['tenant_id']    = $result['tenant_id'];
             $store['state_token']  = $result['state_token'];
             $store['status']       = $result['status'];
-            $store['api_key_hash'] = hash( 'sha256', get_option( 'chatbot_api_key_plain', '' ) );
             $store['current_step'] = 1;
             update_option( self::OPTION_KEY, $store, false );
             self::log_event( 'success', 'Paso 1 completado: tenant registrado', array( 'tenant_id' => $result['tenant_id'] ) );

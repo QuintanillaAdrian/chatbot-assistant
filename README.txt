@@ -3,7 +3,7 @@ Contributors: quintanilla
 Tags: woocommerce, whatsapp, chatbot, telegram
 Requires at least: 6.9
 Requires PHP: 8.2
-Stable tag: 1.0.1
+Stable tag: 1.0.2
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,13 @@ La guía completa (requisitos, HTTPS detrás de NGINX, WhatsApp, problemas comun
 4. Abrir wp-admin → Asistente Chatbot y seguir los pasos 3 a 5.
 
 == Changelog ==
+
+= 1.0.2 =
+* Seguridad: los links del bot y las llamadas del Backend a la tienda usan un secreto de links que
+  se deriva de la API key (antes el hash de la clave, que el Backend guarda en claro). Los links de
+  versiones anteriores dejan de valer.
+* Firma de los links de 64 bits (antes 40) y vencimiento de no más de una hora.
+* Se quitan los formatos de link viejos (login suelto con `?next=`, carrito suelto).
 
 = 1.0.1 =
 * Limpieza: un solo script en el panel (antes "Guardar configuración" y "Activar" mandaban dos

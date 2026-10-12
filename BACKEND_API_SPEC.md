@@ -1,7 +1,7 @@
 # chatbot Backend — API Specification
 
 **Base URL:** `https://api.chatbot.io/api`  
-**Version:** 1.0.1  
+**Version:** 1.0.2  
 **Authentication:** Bearer Token (API Key generada por el plugin en instalación)
 
 ---
@@ -77,7 +77,7 @@ El plugin genera la API Key localmente, la hashea y la envía junto con los dato
   "store_name": "Mi Tienda Online",
   "wp_version": "6.9.1",
   "wc_version": "8.2.1",
-  "plugin_version": "1.0.1"
+  "plugin_version": "1.0.2"
 }
 ```
 
@@ -161,6 +161,7 @@ $wpdb->insert($wpdb->prefix . 'woocommerce_api_keys', [
 | Código | Error | Causa |
 |--------|-------|-------|
 | `400` | `MISSING_FIELDS` | Faltan consumer_key, consumer_secret o wc_api_url |
+| `400` | `WC_URL_NOT_STORE` | El dominio (y puerto) de wc_api_url no es el del site_url registrado; no se hace ningún pedido. Vale igual para `/wc/reconnect` |
 | `401` | `INVALID_API_KEY` | Bearer token inválido o no coincide con el tenant |
 | `422` | `WC_AUTH_FAILED` | WooCommerce rechazó las credenciales (401/403 de WC) |
 | `422` | `WC_CONNECTION_FAILED` | No se pudo conectar a la tienda (timeout, URL incorrecta) |
@@ -472,6 +473,7 @@ El plugin crea nuevas CK/CS programáticamente (mismo proceso que el Paso 2), la
 | `INVALID_API_KEY` | Bearer token no válido o no coincide con el tenant |
 | `TENANT_EXISTS` | Ya existe un tenant con ese api_key_hash |
 | `TENANT_NOT_FOUND` | El tenant_id no existe en la base de datos |
+| `WC_URL_NOT_STORE` | La URL de WooCommerce no es de la tienda registrada |
 | `WC_AUTH_FAILED` | WooCommerce rechazó las credenciales |
 | `WC_CONNECTION_FAILED` | No se pudo conectar a la tienda WooCommerce |
 | `INVALID_STATE_TOKEN` | El state_token OAuth no es válido o expiró |
@@ -621,7 +623,10 @@ para ubicar la conversación; ahí sigue valiendo la verificación del lado del 
 ### Plugin (PHP)
 - Generar API Key con `wp_generate_uuid4()` la primera vez que un admin abre wp-admin (no al activar)
 - Guardar API Key en texto plano en `wp_options` (`chatbot_api_key_plain`, solo acceso local)
-- Guardar `tenant_id`, `api_key_hash` y el estado del wizard en `wp_options` (`chatbot_provision`)
+- Guardar `tenant_id` y el estado del wizard en `wp_options` (`chatbot_provision`)
+- Derivar el secreto de links de la API key (`link_secret()`: HMAC-SHA256 con la clave y la etiqueta
+  `chatbot-link-secret-v1`, igual que `deriveLinkSecret` del Backend). Con él valida los links del bot
+  y el `Bearer` de las llamadas del Backend. Nunca se manda por la red.
 - Crear CK/CS de WooCommerce programáticamente con `wc_rand_hash()` en el Paso 2
 - Capturar CK/CS inmediatamente después de crearlas — WooCommerce solo guarda el hash después
 - Enviar CK/CS al backend en texto plano por HTTPS — nunca guardarlas localmente
@@ -630,6 +635,10 @@ para ubicar la conversación; ahí sigue valiendo la verificación del lado del 
 
 ### Backend (Node.js)
 - Verificar API Key hasheando el Bearer recibido y comparando contra DynamoDB (índice `api_key_hash-index`)
+- En ese mismo momento, si la tienda todavía no lo tiene, derivar el secreto de links de la API key
+  (`deriveLinkSecret`) y guardarlo cifrado (`link_secret_enc`). Con él firma los links del bot (64
+  bits, dos números de 32 en el token) y se autentica ante la tienda (`Bearer`). El `api_key_hash`
+  queda solo para encontrar la tienda.
 - Cifrar CK/CS y tokens de WhatsApp con AES-256 antes de persistir
 - El `tenant_id` es generado en el backend (UUID v4), no en el plugin
 - Las transiciones de `current_step` son unidireccionales: 1→2→3→4→5. Repetir un paso (reconectar
@@ -648,4 +657,4 @@ para ubicar la conversación; ahí sigue valiendo la verificación del lado del 
 
 ---
 
-*chatbot Backend API v1.0.1 — Junio 2026*
+*chatbot Backend API v1.0.2 — Octubre 2026*
