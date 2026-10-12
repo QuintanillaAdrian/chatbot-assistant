@@ -55,7 +55,8 @@ Tres ideas para entender el resto:
 | 4 | WordPress sabe que está en **HTTPS** (detrás de NGINX) | Ver [sección 4](#4-https-detrás-de-nginx) | wp-admin → Ajustes → Generales muestra `https://tu-dominio` |
 | 5 | **Enlaces permanentes** distintos de "Simple" | Las rutas `/wp-json/...` no existen con "Simple" | wp-admin → Ajustes → Enlaces permanentes |
 | 6 | Variable de entorno **`CHATBOT_BACKEND_URL`** en el contenedor | El plugin la lee para saber dónde está el Backend | [sección 3.2](#32-configurar-la-dirección-del-backend) |
-| 7 | La carpeta **`vendor/`** dentro del plugin | Sin ella **ningún link de compra funciona** | [sección 3.1](#31-conseguir-el-plugin-completo) |
+| 7 | La carpeta **`vendor/`** dentro del plugin (`composer install --no-dev`) | Sin ella **ningún link de compra funciona** | [sección 3.1](#31-conseguir-el-plugin-completo) |
+| 8 | PHP 8.2 o más con las extensiones **`mbstring`** y **`bcmath`** (o `gmp`) | La librería de los links (hashids) las usa. Composer solo *sugiere* `bcmath`/`gmp`: la instalación termina bien sin ellas, pero cada link del bot da error al abrirse | `php -m \| grep -E "mbstring\|bcmath\|gmp"` en el servidor (la imagen oficial de Docker de WordPress ya las trae) |
 
 ---
 
@@ -64,14 +65,20 @@ Tres ideas para entender el resto:
 ### 3.1 Conseguir el plugin completo
 
 El plugin usa una librería de Composer (`hashids`) para los links de compra (`/entrar/…`, `/carrito/…` y `/ir/…`).
-Esa librería vive en `vendor/`, que **no está en el repositorio de Git**.
+Esa librería vive en `vendor/`, que **no está en el repositorio de Git**: se instala con Composer.
 
-- **Opción A (recomendada):** pedile a Adrian el ZIP del plugin, que ya trae `vendor/`.
-- **Opción B:** si clonaste el repositorio, dentro de la carpeta del plugin corré:
+1. Pedile a Adrian acceso al repositorio de GitHub (es privado).
+2. Cloná el repositorio en `wp-content/plugins/chatbot-assistant`.
+3. Dentro de esa carpeta, corré:
 
-  ```bash
-  composer install --no-dev
-  ```
+   ```bash
+   composer install --no-dev
+   ```
+
+   Instala exactamente la versión fijada en `composer.lock`. Necesita Composer en el servidor y las
+   extensiones de PHP del punto 8 del checklist (`bcmath` o `gmp`).
+
+Para actualizar el plugin después: `git pull` y otra vez `composer install --no-dev`.
 
 > ⚠️ Sin `vendor/` el plugin se activa y el onboarding funciona igual, pero los links que manda el
 > bot **no hacen nada** al abrirlos, sin ningún error visible. Es el fallo más difícil de notar.
@@ -100,8 +107,7 @@ O con `docker run`: `-e CHATBOT_BACKEND_URL=https://...`
 
 ### 3.3 Instalar y activar
 
-1. Copiá la carpeta `chatbot-assistant` a `wp-content/plugins/` (o subí el ZIP desde wp-admin →
-   Plugins → Añadir nuevo → Subir plugin).
+1. Con el plugin ya en `wp-content/plugins/chatbot-assistant` y `vendor/` instalado (3.1).
 2. Activá el plugin.
 3. **Entrá a cualquier pantalla de wp-admin.** Ahí arranca solo el onboarding (pasos 1 y 2). Activar
    el plugin no alcanza: el disparo ocurre al cargar una página de administración.
@@ -310,6 +316,7 @@ creó. No da de baja la tienda en el Backend: eso se pide a Adrian. Desactivarlo
 | Paso 2 falla una y otra vez | WordPress cree que está en HTTP, o el Backend no llega al dominio | [Sección 4](#4-https-detrás-de-nginx); probar `https://tu-dominio/wp-json/wc/v3` desde fuera |
 | Paso 2 falla con 404 | Enlaces permanentes en "Simple" | Cambiarlos a "Nombre de la entrada" |
 | El bot manda links que no hacen nada | Falta `vendor/` | [3.1](#31-conseguir-el-plugin-completo) |
+| Los links dan error al abrirse ("Missing math extension for Hashids" en el log de PHP) | PHP sin `bcmath` ni `gmp` | Punto 8 del [checklist](#2-antes-de-instalar--checklist) |
 | Los links abren `http://` o `localhost` | La dirección del sitio no es la pública con HTTPS | [4.2](#42-wordpress-la-dirección-del-sitio-con-https-desde-una-variable-de-entorno) |
 | El bot no responde por WhatsApp | El número sigue conectado a otra tienda, o no se conectó | [Sección 6](#6-whatsapp-cómo-conectarlo) |
 | Hay que empezar de cero | — | Borrar las opciones `chatbot_provision` y `chatbot_api_key_plain` y abrir wp-admin: se registra como tienda nueva (con otro `tenant_id`; avisale a Adrian para dar de baja el anterior) |

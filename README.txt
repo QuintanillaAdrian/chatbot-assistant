@@ -30,8 +30,8 @@ La guía completa (requisitos, HTTPS detrás de NGINX, WhatsApp, problemas comun
 
 1. WordPress con WooCommerce activo, en HTTPS y con enlaces permanentes distintos de "Simple".
 2. Variable de entorno `CHATBOT_BACKEND_URL` en el servidor (la dirección del Backend).
-3. Copiar esta carpeta, **con `vendor/`** (o correr `composer install --no-dev`), a
-   `wp-content/plugins/chatbot-assistant` y activar el plugin.
+3. Clonar el repositorio en `wp-content/plugins/chatbot-assistant`, correr ahí
+   `composer install --no-dev` (PHP con `bcmath` o `gmp`) y activar el plugin.
 4. Abrir wp-admin → Asistente Chatbot y seguir los pasos 3 a 5.
 
 == Changelog ==
