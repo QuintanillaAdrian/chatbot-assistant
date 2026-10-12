@@ -39,6 +39,30 @@ class Chatbot_Assistant_Backend_Client {
 	}
 
 	/**
+	 * Dirección pública de la tienda que se le informa al Backend (registro y API de WooCommerce).
+	 *
+	 * Sale de la variable de entorno SITE_DOMAIN si está definida (ej. https://tienda.com detrás de
+	 * NGINX, cuando WordPress tiene guardada otra dirección); si no, de WordPress (get_home_url()).
+	 * Acepta el dominio solo (se asume https://) o la URL completa. Sin barra final.
+	 *
+	 * Ojo: WordPress sigue usando su propia dirección para redirecciones, checkout y cookies; las dos
+	 * tienen que coincidir o los links del bot llegan sin sesión (ver HOW_IT_WORKS.md, 4.3).
+	 *
+	 * @return string
+	 */
+	public static function get_store_url() {
+		$domain = getenv( 'SITE_DOMAIN' );
+		if ( false === $domain || '' === trim( $domain ) ) {
+			return untrailingslashit( get_home_url() );
+		}
+		$domain = trim( $domain );
+		if ( ! preg_match( '#^https?://#i', $domain ) ) {
+			$domain = 'https://' . $domain;
+		}
+		return untrailingslashit( esc_url_raw( $domain ) );
+	}
+
+	/**
 	 * Send HTTP request to Backend API
 	 *
 	 * @param string $endpoint   Path relativo (ej: /tenants, /tenants/{id}/wc/validate)
@@ -180,7 +204,7 @@ class Chatbot_Assistant_Backend_Client {
 		$api_key_hash = hash( 'sha256', $api_key );
 		$payload      = array(
 			'api_key_hash'   => $api_key_hash,
-			'site_url'       => get_home_url(),
+			'site_url'       => self::get_store_url(),
 			'store_name'     => get_bloginfo( 'name' ),
 			'wp_version'     => get_bloginfo( 'version' ),
 			'wc_version'     => defined( 'WC_VERSION' ) ? WC_VERSION : '',

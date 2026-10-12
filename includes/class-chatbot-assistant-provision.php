@@ -367,7 +367,7 @@ class Chatbot_Assistant_Provision {
                 $store['tenant_id'],
                 $wc_keys['key'],
                 $wc_keys['secret'],
-                get_home_url() . '/wp-json/wc/v3'
+                Chatbot_Assistant_Backend_Client::get_store_url() . '/wp-json/wc/v3'
             );
 
             $store['wc_last_attempt'] = time();

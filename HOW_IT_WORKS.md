@@ -171,10 +171,20 @@ services:
 ### 4.3 Alternativa en uso: el plugin lee la dirección de una variable de entorno ⚠️ deuda técnica
 
 Es la forma que usa el equipo hoy para la migración (decisión del 2026-10-08): la dirección pública
-con HTTPS se pone en una variable de entorno del contenedor y **el plugin** la lee para informársela
-al Backend, en lugar de configurarla en WordPress como en 4.2. Ya se hizo así en mayo con la variable
-`SITE_DOMAIN`; esa lectura se quitó después, y la versión actual del plugin usa solo la dirección de
-WordPress (`get_home_url()`). Se vuelve a agregar para la migración.
+con HTTPS se pone en la variable de entorno **`SITE_DOMAIN`** del contenedor y **el plugin** la lee
+(desde la 1.0.3) para informársela al Backend, en lugar de configurarla en WordPress como en 4.2:
+
+```yaml
+services:
+  wordpress:
+    environment:
+      SITE_DOMAIN: https://tu-dominio.com   # o solo tu-dominio.com: se asume https://
+```
+
+El plugin la usa en los dos datos que le manda al Backend: la dirección de la tienda (paso 1) y la de
+la API de WooCommerce (paso 2). Si la variable no está o está vacía, usa la de WordPress
+(`get_home_url()`), como antes. Se lee solo del entorno, igual que `CHATBOT_BACKEND_URL` (no de un
+archivo `.env`).
 
 Funciona para registrar la tienda, pero **no es la forma correcta** y está anotada para corregirse
 (ítem L9 de `PLAN_DE_CORRECCIONES.md` en el repositorio del Backend):
@@ -186,7 +196,8 @@ Funciona para registrar la tienda, pero **no es la forma correcta** y está anot
 - **La API de WooCommerce sigue dependiendo de que WordPress sepa que está en HTTPS** (4.1). La
   variable no lo arregla: si falta `X-Forwarded-Proto`, el paso 2 falla igual.
 - **El Backend guarda la dirección una sola vez**, al registrar la tienda. Cambiar la variable después
-  no la actualiza.
+  no la actualiza. Por eso tiene que estar puesta **antes** de activar el plugin (o del primer ingreso
+  a wp-admin, que es cuando se registra la tienda).
 
 Si se usa esta alternativa, la variable tiene que ser **exactamente** la misma dirección que WordPress
 muestra en Ajustes → Generales (mismo `https://`, mismo dominio, sin `/` final).
