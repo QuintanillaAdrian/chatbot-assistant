@@ -11,7 +11,11 @@
  * - Restos de versiones anteriores: la tabla `{prefix}chatbot_tenants` y las opciones
  *   `chatbot_tenant_id`/`chatbot_version`, que creaba el activador y nada leía.
  *
- * No da de baja la tienda en el Backend: eso es del lado del Backend.
+ * - Desde la 1.0.4 (M8), primero da de baja la tienda en el Backend: suelta sus canales (el número de
+ *   WhatsApp queda libre) y borra sus datos. Antes no lo hacía, y al reinstalar el plugin se
+ *   registraba una tienda nueva mientras la vieja retenía el número (Socagru, tres veces).
+ *
+ * Borrar el plugin es dar de baja la tienda: para actualizarlo se usa `git pull` + `composer install`.
  *
  * @package    Chatbot_Assistant
  */
@@ -23,10 +27,17 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 
 global $wpdb;
 
-// WordPress no carga el plugin al desinstalarlo: se trae solo la clase que sabe borrar la clave.
+// WordPress no carga el plugin al desinstalarlo: se traen solo las clases que hacen falta acá.
 require_once plugin_dir_path( __FILE__ ) . 'includes/class-chatbot-assistant-provision.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/class-backend-client.php';
 
 $chatbot_store = get_option( 'chatbot_provision', array() );
+
+// La baja va ANTES de borrar las opciones: el pedido se autentica con la API key guardada en
+// `chatbot_api_key_plain`. Si falla, queda en el log de PHP y la desinstalación sigue igual.
+if ( ! empty( $chatbot_store['tenant_id'] ) ) {
+	Chatbot_Assistant_Backend_Client::delete_tenant( $chatbot_store['tenant_id'] );
+}
 Chatbot_Assistant_Provision::delete_wc_key( $chatbot_store['consumerKey'] ?? '' );
 
 foreach ( array( 'chatbot_provision', 'chatbot_provision_audit', 'chatbot_api_key_plain', 'chatbot_tenant_id', 'chatbot_version' ) as $chatbot_option ) {

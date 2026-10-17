@@ -420,4 +420,17 @@ class Chatbot_Assistant_Backend_Client {
 		$response = self::request( "/tenants/{$tenant_id}/status", 'GET' );
 		return self::parse_response( $response );
 	}
+
+	/**
+	 * Baja de la tienda en el Backend (M8, 1.0.4). La llama uninstall.php ANTES de borrar la API key:
+	 * después ya no habría con qué autenticarse. El Backend suelta los canales (el número de WhatsApp
+	 * queda libre para otra tienda, el bot de Telegram deja de apuntarle) y borra los datos de la
+	 * tienda y de sus clientes. Si falla (sin red, Backend caído), el error queda en el log de PHP y la
+	 * desinstalación sigue: la tienda queda huérfana y la da de baja soporte (scripts/deleteTenant.ts
+	 * del Backend).
+	 */
+	public static function delete_tenant( $tenant_id ) {
+		$response = self::request( "/tenants/{$tenant_id}", 'DELETE' );
+		return self::parse_response( $response );
+	}
 }

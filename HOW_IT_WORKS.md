@@ -78,7 +78,18 @@ Esa librería vive en `vendor/`, que **no está en el repositorio de Git**: se i
    Instala exactamente la versión fijada en `composer.lock`. Necesita Composer en el servidor y las
    extensiones de PHP del punto 8 del checklist (`bcmath` o `gmp`).
 
-Para actualizar el plugin después: `git pull` y otra vez `composer install --no-dev`.
+Para actualizar el plugin después: `git pull` y otra vez `composer install --no-dev`. **Nunca lo
+borres para reinstalarlo** (ver la advertencia de abajo y la [sección 7.1](#71-borrar-el-plugin-da-de-baja-la-tienda-desde-la-104)).
+
+> ⚠️ **Borrar el plugin da de baja la tienda** (desde la 1.0.4). Al borrarlo (Plugins → Borrar), el
+> plugin le pide al Backend la baja: se sueltan el número de WhatsApp y el bot de Telegram, y se
+> borran la configuración del bot y los datos de los clientes. Si después se vuelve a instalar, es
+> una tienda nueva y hay que repetir los 5 pasos del onboarding.
+>
+> Antes de la 1.0.4 la baja no existía: la tienda vieja quedaba con el número de WhatsApp y el paso 3
+> de la nueva fallaba con "Este número ya está conectado a otra tienda" (pasó tres veces entre el
+> 2026-10-12 y el 2026-10-15). Si pasa igual (por ejemplo, si el servidor no tenía conexión al
+> Backend al borrar el plugin), pedile a Adrian que dé de baja la tienda vieja.
 
 > ⚠️ Sin `vendor/` el plugin se activa y el onboarding funciona igual, pero los links que manda el
 > bot **no hacen nada** al abrirlos, sin ningún error visible. Es el fallo más difícil de notar.
@@ -314,8 +325,38 @@ la tienda (`Chatbot_Assistant_Provision::link_secret`). El Backend lo guarda cif
 que el plugin le hace un pedido, que pasa en el paso 2 del onboarding o al abrir wp-admin. Si el bot
 no puede armar links ("sin link_secret_enc" en el log del Backend), alcanza con abrir wp-admin una vez.
 
-**Al desinstalar** (Plugins → Borrar), el plugin borra sus opciones y la clave de WooCommerce que
-creó. No da de baja la tienda en el Backend: eso se pide a Adrian. Desactivarlo no borra nada.
+### 7.1 Borrar el plugin da de baja la tienda (desde la 1.0.4)
+
+| Acción en wp-admin | Qué pasa |
+|---|---|
+| **Desactivar** | Nada se borra. El bot sigue registrado; al reactivar, sigue todo igual. |
+| **Actualizar** | No se borra: `git pull` y `composer install --no-dev` (sección 3.1). |
+| **Borrar** (Plugins → Borrar) | **Se da de baja la tienda.** Es definitivo. |
+
+Al borrarlo, `uninstall.php` hace esto, en este orden:
+
+1. **Le pide la baja al Backend** (`DELETE /api/tenants/{id}`, autenticado con la API key de la
+   tienda). El Backend:
+   - suelta el **número de WhatsApp**, que queda libre para conectarlo en otra tienda;
+   - le pide a **Telegram** que el bot deje de mandarle mensajes;
+   - borra las claves de WooCommerce que tenía guardadas, los datos de los clientes de la tienda
+     (qué email corresponde a cada teléfono) y la tienda misma, con la configuración del bot.
+2. **Borra la clave de la API de WooCommerce** que creó el onboarding (paso 2).
+3. **Borra sus opciones** de WordPress, entre ellas la API key de la tienda.
+
+La baja va primero porque necesita esa API key: sin ella el Backend no sabría que el pedido viene de
+esta tienda. Una tienda solo puede darse de baja a sí misma.
+
+**Qué se pierde:** los canales conectados, el nombre, el mensaje de bienvenida y las instrucciones del
+bot, y los clientes que el bot ya tenía identificados. **Qué no se toca:** la tienda de WooCommerce,
+sus productos, clientes y pedidos. Si se vuelve a instalar el plugin, es una tienda nueva para el
+Backend: hay que repetir los 5 pasos del onboarding y volver a conectar el número.
+
+**Si el Backend no responde** al borrarlo (servidor sin salida a internet, Backend caído), la
+desinstalación sigue igual y queda en el log de PHP una línea como
+`[Chatbot Assistant] DELETE https://…/api/tenants/… -> error: …`. La tienda queda viva en el Backend
+con el número tomado: pedile a Adrian que la dé de baja (tiene un script para eso). Lo mismo con las
+tiendas instaladas con una versión anterior a la 1.0.4.
 
 ---
 
@@ -327,6 +368,7 @@ creó. No da de baja la tienda en el Backend: eso se pide a Adrian. Desactivarlo
 | Paso 2 falla una y otra vez | WordPress cree que está en HTTP, o el Backend no llega al dominio | [Sección 4](#4-https-detrás-de-nginx); probar `https://tu-dominio/wp-json/wc/v3` desde fuera |
 | Paso 2 falla con 404 | Enlaces permanentes en "Simple" | Cambiarlos a "Nombre de la entrada" |
 | El bot manda links que no hacen nada | Falta `vendor/` | [3.1](#31-conseguir-el-plugin-completo) |
+| Paso 3: "Este número ya está conectado a otra tienda" después de reinstalar el plugin | La tienda vieja no se dio de baja (plugin anterior a la 1.0.4, o el Backend no respondió al borrarlo: buscar `DELETE …/api/tenants/` en el log de PHP) | Pedirle a Adrian que dé de baja la tienda vieja; para actualizar, [3.1](#31-conseguir-el-plugin-completo) sin borrar |
 | Los links dan error al abrirse ("Missing math extension for Hashids" en el log de PHP) | PHP sin `bcmath` ni `gmp` | Punto 8 del [checklist](#2-antes-de-instalar--checklist) |
 | Los links abren `http://` o `localhost` | La dirección del sitio no es la pública con HTTPS | [4.2](#42-wordpress-la-dirección-del-sitio-con-https-desde-una-variable-de-entorno) |
 | El bot no responde por WhatsApp | El número sigue conectado a otra tienda, o no se conectó | [Sección 6](#6-whatsapp-cómo-conectarlo) |

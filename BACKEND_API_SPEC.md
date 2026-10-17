@@ -1,7 +1,7 @@
 # chatbot Backend — API Specification
 
 **Base URL:** `https://api.chatbot.io/api`  
-**Version:** 1.0.2  
+**Version:** 1.0.4  
 **Authentication:** Bearer Token (API Key generada por el plugin en instalación)
 
 ---
@@ -77,7 +77,7 @@ El plugin genera la API Key localmente, la hashea y la envía junto con los dato
   "store_name": "Mi Tienda Online",
   "wp_version": "6.9.1",
   "wc_version": "8.2.1",
-  "plugin_version": "1.0.2"
+  "plugin_version": "1.0.4"
 }
 ```
 
@@ -453,6 +453,42 @@ El plugin crea nuevas CK/CS programáticamente (mismo proceso que el Paso 2), la
 
 ---
 
+### 11. DELETE /tenants/{tenant_id}
+**Da de baja la tienda — la llama `uninstall.php` al borrar el plugin (desde la 1.0.4)**
+
+Suelta los canales (borra el WhatsApp de la tienda, así el número se puede conectar en otra, y le
+pide a Telegram que el bot deje de apuntar al Backend) y borra la tienda, sus claves de WooCommerce y
+las identidades de sus clientes. No toca nada en Meta: la App sigue suscrita al WABA y se reusa al
+conectar el número en otra tienda. Las conversaciones y carritos pendientes vencen solos. La
+tienda se borra al final: si algo falla en el medio, se puede repetir. Una tienda solo puede darse
+de baja a sí misma (el `tenant_id` tiene que ser el de su API key).
+
+El plugin la llama ANTES de borrar su API key. Si falla, la desinstalación sigue y el error queda
+en el log de PHP; la tienda huérfana la da de baja soporte (`scripts/deleteTenant.ts` del Backend).
+
+**Request:** sin body.
+
+**Response 200 OK:**
+```json
+{
+  "success": true,
+  "deleted": {
+    "whatsapp": true,
+    "telegram": "soltado",
+    "customer_identities": 2
+  }
+}
+```
+> `telegram`: `"soltado"`, `"fallo"` (Telegram no respondió o el token ya no vale; el bot se borra
+> igual) o `"sin-bot"`.
+
+**Errores:**
+| Código | Error | Causa |
+|--------|-------|-------|
+| `401` | `INVALID_API_KEY` | Bearer inválido, o el `tenant_id` no es el de esa API key |
+
+---
+
 ## Formato de errores
 
 ```json
@@ -632,6 +668,7 @@ para ubicar la conversación; ahí sigue valiendo la verificación del lado del 
 - Enviar CK/CS al backend en texto plano por HTTPS — nunca guardarlas localmente
 - En reconexión: crear CK/CS nuevas (mismo proceso), invalidar las anteriores desde WC
 - Siempre enviar `Authorization: Bearer {api_key}` en texto plano — el backend hace el hash internamente
+- Al desinstalar (`uninstall.php`): pedir la baja (`DELETE /tenants/{tenant_id}`) ANTES de borrar la API key
 
 ### Backend (Node.js)
 - Verificar API Key hasheando el Bearer recibido y comparando contra DynamoDB (índice `api_key_hash-index`)
@@ -657,4 +694,4 @@ para ubicar la conversación; ahí sigue valiendo la verificación del lado del 
 
 ---
 
-*chatbot Backend API v1.0.2 — Octubre 2026*
+*chatbot Backend API v1.0.4 — Octubre 2026*

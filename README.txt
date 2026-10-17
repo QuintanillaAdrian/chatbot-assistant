@@ -3,7 +3,7 @@ Contributors: quintanilla
 Tags: woocommerce, whatsapp, chatbot, telegram
 Requires at least: 6.9
 Requires PHP: 8.2
-Stable tag: 1.0.3
+Stable tag: 1.0.4
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,6 +36,12 @@ La guía completa (requisitos, HTTPS detrás de NGINX, WhatsApp, problemas comun
 4. Abrir wp-admin → Asistente Chatbot y seguir los pasos 3 a 5.
 
 == Changelog ==
+
+= 1.0.4 =
+* Al borrar el plugin (Plugins → Borrar) da de baja la tienda en el Backend antes de borrar su
+  clave: suelta el número de WhatsApp y el bot de Telegram y borra los datos de la tienda y de sus
+  clientes. Antes la tienda quedaba viva y, al reinstalar, el número seguía tomado por ella.
+  Para actualizar el plugin no hay que borrarlo: `git pull` + `composer install --no-dev`.
 
 = 1.0.3 =
 * La dirección pública de la tienda que se le informa al Backend (registro y API de WooCommerce) se
