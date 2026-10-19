@@ -358,6 +358,24 @@ desinstalación sigue igual y queda en el log de PHP una línea como
 con el número tomado: pedile a Adrian que la dé de baja (tiene un script para eso). Lo mismo con las
 tiendas instaladas con una versión anterior a la 1.0.4.
 
+### 7.2 Tiendas con varios vendedores (Dokan)
+
+Si la tienda usa **Dokan** (cada emprendedor publica sus productos), el bot lo detecta solo, sin
+configurar nada y sin actualizar el plugin:
+
+- responde "¿qué vendedores tienen?" y muestra los productos de un vendedor puntual;
+- en cada producto que muestra dice quién lo vende ("Máscara Colibrí · de Máscaras"), también en la
+  lista del link de compra;
+- recomienda otros productos del mismo vendedor, y el menú de "¿qué productos tienen?" ofrece ver
+  lo de cada vendedor;
+- una compra a varios vendedores la ve como **un** pedido (Dokan la parte en un sub-pedido por vendedor;
+  el bot trabaja siempre con el pedido principal).
+
+Lo único que necesita es que las rutas públicas de Dokan respondan desde fuera:
+`https://tu-dominio/wp-json/dokan/v1/stores` tiene que devolver la lista de vendedores. Si algún
+plugin de seguridad bloquea la REST API para visitantes, el bot sigue funcionando pero sin vendedores.
+Otros plugins de marketplace (WCFM, MultiVendorX) todavía no están soportados.
+
 ---
 
 ## 8. Problemas comunes
@@ -372,6 +390,7 @@ tiendas instaladas con una versión anterior a la 1.0.4.
 | Los links dan error al abrirse ("Missing math extension for Hashids" en el log de PHP) | PHP sin `bcmath` ni `gmp` | Punto 8 del [checklist](#2-antes-de-instalar--checklist) |
 | Los links abren `http://` o `localhost` | La dirección del sitio no es la pública con HTTPS | [4.2](#42-wordpress-la-dirección-del-sitio-con-https-desde-una-variable-de-entorno) |
 | El bot no responde por WhatsApp | El número sigue conectado a otra tienda, o no se conectó | [Sección 6](#6-whatsapp-cómo-conectarlo) |
+| Con Dokan, el bot dice que no hay vendedores | `/wp-json/dokan/v1/stores` bloqueada para visitantes (plugin de seguridad) | [7.2](#72-tiendas-con-varios-vendedores-dokan); abrir esa dirección desde fuera |
 | Hay que empezar de cero | — | Borrar las opciones `chatbot_provision` y `chatbot_api_key_plain` y abrir wp-admin: se registra como tienda nueva (con otro `tenant_id`; avisale a Adrian para dar de baja el anterior) |
 
 **Modo soporte.** El dueño de la tienda no ve nada técnico en el panel. Para diagnosticar, agregá en
