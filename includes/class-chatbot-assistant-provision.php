@@ -655,14 +655,14 @@ class Chatbot_Assistant_Provision {
     }
 
     /**
-     * PASO 4: Save bot configuration (nombre, mensaje bienvenida, system_prompt).
+     * PASO 4: Save bot configuration (nombre, mensaje bienvenida).
+     * Desde la 1.0.5 no hay instrucciones propias (system_prompt): todas las tiendas usan el mismo prompt.
      */
     public static function handle_save_config( $request ) {
         $params = $request->get_json_params();
-        
+
         $bot_name          = sanitize_text_field( $params['bot_name'] ?? '' );
         $welcome_message   = sanitize_text_field( $params['welcome_message'] ?? '' );
-        $system_prompt     = sanitize_text_field( $params['system_prompt'] ?? '' );
 
         $store = get_option( self::OPTION_KEY, array() );
         if ( empty( $store['tenant_id'] ) ) {
@@ -672,7 +672,7 @@ class Chatbot_Assistant_Provision {
         }
 
         // Validar que al menos un campo está presente
-        if ( empty( $bot_name ) && empty( $welcome_message ) && empty( $system_prompt ) ) {
+        if ( empty( $bot_name ) && empty( $welcome_message ) ) {
             return new WP_REST_Response( array(
                 'error' => 'At least one field is required',
             ), 400 );
@@ -684,9 +684,6 @@ class Chatbot_Assistant_Provision {
         }
         if ( ! empty( $welcome_message ) ) {
             $config['welcome_message'] = $welcome_message;
-        }
-        if ( ! empty( $system_prompt ) ) {
-            $config['system_prompt'] = $system_prompt;
         }
 
         // Enviar al Backend
@@ -702,7 +699,7 @@ class Chatbot_Assistant_Provision {
         // Guardar localmente
         $store['bot_name']        = $bot_name;
         $store['welcome_message'] = $welcome_message;
-        $store['system_prompt']   = $system_prompt;
+        unset( $store['system_prompt'] ); // lo que guardaron versiones anteriores a la 1.0.5
         $store['current_step']    = self::advanced_step( $store, 4 );
         update_option( self::OPTION_KEY, $store, false );
 

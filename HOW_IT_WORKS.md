@@ -230,7 +230,7 @@ y pide credenciales, que es lo esperado).
 | **1. Registro** | El plugin genera una API key, registra la tienda en el Backend (`POST /tenants`) con su dirección pública y guarda el `tenant_id`. | ✅ Al abrir wp-admin |
 | **2. WooCommerce** | Crea un par de claves de la API de WooCommerce (descripción `provisioning`, lectura/escritura) y el Backend las prueba contra la tienda (`POST /tenants/{id}/wc/validate`). Si falla, reintenta solo con espera creciente (30 s → 5 min). | ✅ En el mismo request que el paso 1 |
 | **3. Canal** | WhatsApp (conexión directa con los datos de Meta) o Telegram. Ver [sección 6](#6-whatsapp-cómo-conectarlo). | ❌ Manual, un formulario |
-| **4. Personalización** | Nombre del bot, mensaje de bienvenida, instrucciones (`PATCH /config`). | ❌ Manual, desde el panel |
+| **4. Personalización** | Nombre del bot y mensaje de bienvenida (`PATCH /config`). La bienvenida es lo que recibe quien abre el bot de Telegram (`/start`), tal cual, sin pasar por la IA; sin bienvenida, la IA saluda sola. Cómo atiende el bot (tono, trato de vos y reglas) es igual para todas las tiendas: desde la 1.0.5 no hay instrucciones propias, porque un texto libre podía contradecir las reglas del bot (por ejemplo, "mandá al cliente a la ficha del producto" frente al link de compra que arma el bot). | ❌ Manual, desde el panel |
 | **5. Activación** | Exige WooCommerce verificado y al menos un canal conectado (`POST /activate`). | ❌ Manual, un botón |
 
 Al abrir el panel del plugin, el estado se vuelve a leer del Backend (`GET /status`), así que lo que
@@ -347,8 +347,7 @@ Al borrarlo, `uninstall.php` hace esto, en este orden:
 La baja va primero porque necesita esa API key: sin ella el Backend no sabría que el pedido viene de
 esta tienda. Una tienda solo puede darse de baja a sí misma.
 
-**Qué se pierde:** los canales conectados, el nombre, el mensaje de bienvenida y las instrucciones del
-bot, y los clientes que el bot ya tenía identificados. **Qué no se toca:** la tienda de WooCommerce,
+**Qué se pierde:** los canales conectados, el nombre y el mensaje de bienvenida del bot, y los clientes que el bot ya tenía identificados. **Qué no se toca:** la tienda de WooCommerce,
 sus productos, clientes y pedidos. Si se vuelve a instalar el plugin, es una tienda nueva para el
 Backend: hay que repetir los 5 pasos del onboarding y volver a conectar el número.
 

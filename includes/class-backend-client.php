@@ -367,7 +367,7 @@ class Chatbot_Assistant_Backend_Client {
 	 * PASO 4: Save bot config
 	 *
 	 * @param string $tenant_id
-	 * @param array  $config  Claves soportadas: bot_name, welcome_message, system_prompt, language
+	 * @param array  $config  Claves soportadas: bot_name, welcome_message
 	 */
 	public static function save_config( $tenant_id, $config = array() ) {
 		$response = self::request( "/tenants/{$tenant_id}/config", 'PATCH', $config );

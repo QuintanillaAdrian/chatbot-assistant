@@ -1,7 +1,7 @@
 # chatbot Backend — API Specification
 
 **Base URL:** `https://api.chatbot.io/api`  
-**Version:** 1.0.4  
+**Version:** 1.0.5  
 **Authentication:** Bearer Token (API Key generada por el plugin en instalación)
 
 ---
@@ -77,7 +77,7 @@ El plugin genera la API Key localmente, la hashea y la envía junto con los dato
   "store_name": "Mi Tienda Online",
   "wp_version": "6.9.1",
   "wc_version": "8.2.1",
-  "plugin_version": "1.0.4"
+  "plugin_version": "1.0.5"
 }
 ```
 
@@ -284,14 +284,16 @@ Reconectar el mismo número en la misma tienda (por ejemplo, con un token nuevo)
 ### 5. PATCH /tenants/{tenant_id}/config
 **Paso 4 — Personalización del asistente**
 
-Guarda el nombre del bot, mensaje de bienvenida e idioma en PostgreSQL. Estos valores personalizan el system prompt del agente para esa tienda específica.
+Guarda el nombre del bot y el mensaje de bienvenida. El nombre entra en el prompt del bot; la
+bienvenida es lo que recibe quien abre el bot de Telegram (`/start`), tal cual. Cómo atiende el bot
+(tono, trato de vos y reglas) es el mismo para todas las tiendas: desde la 1.0.5 no hay instrucciones
+propias (`system_prompt`). Si un plugin anterior lo manda, el Backend lo ignora sin error.
 
-**Request:**
+**Request** (los dos campos son opcionales, al menos uno requerido):
 ```json
 {
   "bot_name": "Sofía",
-  "welcome_message": "¡Hola! Soy Sofía, tu asistente de compras 👋 ¿En qué te ayudo?",
-  "language": "es"
+  "welcome_message": "¡Hola! Soy Sofía, tu asistente de compras 👋 ¿En qué te ayudo?"
 }
 ```
 
@@ -299,19 +301,14 @@ Guarda el nombre del bot, mensaje de bienvenida e idioma en PostgreSQL. Estos va
 ```json
 {
   "success": true,
-  "bot_name": "Sofía",
-  "welcome_message": "¡Hola! Soy Sofía...",
-  "language": "es",
-  "current_step": 4,
-  "saved_at": "2026-06-26T10:40:00Z"
+  "current_step": 4
 }
 ```
 
 **Errores:**
 | Código | Error | Causa |
 |--------|-------|-------|
-| `400` | `MISSING_FIELDS` | bot_name o welcome_message vacíos |
-| `400` | `INVALID_LANGUAGE` | Idioma no soportado (solo "es" y "en" por ahora) |
+| `400` | `MISSING_FIELDS` | No vino ni bot_name ni welcome_message |
 | `401` | `INVALID_API_KEY` | Bearer token inválido |
 | `404` | `TENANT_NOT_FOUND` | El tenant_id no existe |
 | `500` | `DATABASE_ERROR` | Error al guardar configuración |
@@ -694,4 +691,4 @@ para ubicar la conversación; ahí sigue valiendo la verificación del lado del 
 
 ---
 
-*chatbot Backend API v1.0.4 — Octubre 2026*
+*chatbot Backend API v1.0.5 — Octubre 2026*

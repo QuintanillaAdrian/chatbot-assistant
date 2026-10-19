@@ -3,7 +3,7 @@ Contributors: quintanilla
 Tags: woocommerce, whatsapp, chatbot, telegram
 Requires at least: 6.9
 Requires PHP: 8.2
-Stable tag: 1.0.4
+Stable tag: 1.0.5
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,6 +36,11 @@ La guía completa (requisitos, HTTPS detrás de NGINX, WhatsApp, problemas comun
 4. Abrir wp-admin → Asistente Chatbot y seguir los pasos 3 a 5.
 
 == Changelog ==
+
+= 1.0.5 =
+* El Paso 4 ya no tiene instrucciones propias ("System Prompt"): cómo atiende el bot (tono, trato
+  de vos y reglas) es el mismo para todas las tiendas, el que se prueba. Quedan el nombre del bot y la
+  bienvenida, que ahora sí recibe quien abre el bot de Telegram.
 
 = 1.0.4 =
 * Al borrar el plugin (Plugins → Borrar) da de baja la tienda en el Backend antes de borrar su

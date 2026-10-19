@@ -202,16 +202,8 @@
 									placeholder="ej: Hola! Soy Sofia, tu asistente virtual..."
 									><?php echo esc_textarea( $store['welcome_message'] ?? '' ); ?></textarea></td>
 							</tr>
-							<tr>
-								<th><label for="chatbot-system-prompt">System Prompt</label></th>
-								<td>
-									<textarea id="chatbot-system-prompt" name="system_prompt" class="large-text" rows="4"
-										placeholder="Define cómo debe comportarse el bot..."
-										><?php echo esc_textarea( $store['system_prompt'] ?? '' ); ?></textarea>
-									<p class="description">Describe el rol, tono y comportamiento del bot.</p>
-								</td>
-							</tr>
 						</table>
+						<p class="description">La bienvenida es lo primero que recibe quien abre el bot. Cómo atiende el bot (tono y reglas) es igual para todas las tiendas.</p>
 						<button type="submit" class="button button-primary">Guardar Configuración</button>
 						<span id="chatbot-config-status" style="margin-left: 10px;"></span>
 					</form>
