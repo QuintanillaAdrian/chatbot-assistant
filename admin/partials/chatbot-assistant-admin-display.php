@@ -202,8 +202,19 @@
 									placeholder="ej: Hola! Soy Sofia, tu asistente virtual..."
 									><?php echo esc_textarea( $store['welcome_message'] ?? '' ); ?></textarea></td>
 							</tr>
+							<tr>
+								<th><label for="chatbot-trato">Trato al cliente</label></th>
+								<td>
+									<?php $trato = $store['trato'] ?? 'vos'; ?>
+									<select id="chatbot-trato" name="trato">
+										<option value="vos" <?php selected( $trato, 'vos' ); ?>>De vos (“¿Qué querés llevar?”)</option>
+										<option value="usted" <?php selected( $trato, 'usted' ); ?>>De usted (“¿Qué quiere llevar?”)</option>
+									</select>
+									<p class="description">Escribí la bienvenida con el mismo trato.</p>
+								</td>
+							</tr>
 						</table>
-						<p class="description">La bienvenida es lo primero que recibe quien abre el bot. Cómo atiende el bot (tono y reglas) es igual para todas las tiendas.</p>
+						<p class="description">La bienvenida es lo primero que recibe quien abre el bot. Cómo atiende el bot (tono y reglas) es igual para todas las tiendas; lo único que se elige es el trato.</p>
 						<button type="submit" class="button button-primary">Guardar Configuración</button>
 						<span id="chatbot-config-status" style="margin-left: 10px;"></span>
 					</form>

@@ -463,6 +463,9 @@ class Chatbot_Assistant_Provision {
         if ( isset( $status['bot_name'] ) ) {
             $store['bot_name'] = $status['bot_name'];
         }
+        if ( isset( $status['trato'] ) ) {
+            $store['trato'] = $status['trato'];
+        }
         if ( isset( $status['phone_number'] ) ) {
             $store['phone_number'] = $status['phone_number'];
         }
@@ -655,14 +658,16 @@ class Chatbot_Assistant_Provision {
     }
 
     /**
-     * PASO 4: Save bot configuration (nombre, mensaje bienvenida).
-     * Desde la 1.0.5 no hay instrucciones propias (system_prompt): todas las tiendas usan el mismo prompt.
+     * PASO 4: Save bot configuration (nombre, mensaje bienvenida, trato).
+     * Desde la 1.0.5 no hay instrucciones propias (system_prompt): todas las tiendas usan el mismo prompt
+     * y lo único que eligen es el trato al cliente (vos o usted).
      */
     public static function handle_save_config( $request ) {
         $params = $request->get_json_params();
 
         $bot_name          = sanitize_text_field( $params['bot_name'] ?? '' );
         $welcome_message   = sanitize_text_field( $params['welcome_message'] ?? '' );
+        $trato             = in_array( $params['trato'] ?? '', array( 'vos', 'usted' ), true ) ? $params['trato'] : 'vos';
 
         $store = get_option( self::OPTION_KEY, array() );
         if ( empty( $store['tenant_id'] ) ) {
@@ -678,7 +683,7 @@ class Chatbot_Assistant_Provision {
             ), 400 );
         }
 
-        $config = array();
+        $config = array( 'trato' => $trato );
         if ( ! empty( $bot_name ) ) {
             $config['bot_name'] = $bot_name;
         }
@@ -699,6 +704,7 @@ class Chatbot_Assistant_Provision {
         // Guardar localmente
         $store['bot_name']        = $bot_name;
         $store['welcome_message'] = $welcome_message;
+        $store['trato']           = $trato;
         unset( $store['system_prompt'] ); // lo que guardaron versiones anteriores a la 1.0.5
         $store['current_step']    = self::advanced_step( $store, 4 );
         update_option( self::OPTION_KEY, $store, false );

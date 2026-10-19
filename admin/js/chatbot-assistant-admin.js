@@ -124,7 +124,8 @@
 				statusEl.textContent = 'Guardando...';
 				rest('config', 'PATCH', {
 					bot_name: document.getElementById('chatbot-bot-name').value,
-					welcome_message: document.getElementById('chatbot-welcome-msg').value
+					welcome_message: document.getElementById('chatbot-welcome-msg').value,
+					trato: document.getElementById('chatbot-trato').value
 				})
 					.then(function (d) {
 						statusEl.textContent = d.success ? 'Guardado correctamente' : ('Error: ' + (d.error || ''));

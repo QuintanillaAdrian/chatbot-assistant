@@ -38,9 +38,9 @@ La guía completa (requisitos, HTTPS detrás de NGINX, WhatsApp, problemas comun
 == Changelog ==
 
 = 1.0.5 =
-* El Paso 4 ya no tiene instrucciones propias ("System Prompt"): cómo atiende el bot (tono, trato
-  de vos y reglas) es el mismo para todas las tiendas, el que se prueba. Quedan el nombre del bot y la
-  bienvenida, que ahora sí recibe quien abre el bot de Telegram.
+* El Paso 4 ya no tiene instrucciones propias ("System Prompt"): cómo atiende el bot (tono y reglas)
+  es el mismo para todas las tiendas, el que se prueba. Quedan el nombre del bot y la bienvenida, que
+  ahora sí recibe quien abre el bot de Telegram, y se suma el trato al cliente: de vos o de usted.
 
 = 1.0.4 =
 * Al borrar el plugin (Plugins → Borrar) da de baja la tienda en el Backend antes de borrar su
