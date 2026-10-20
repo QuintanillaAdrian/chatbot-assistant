@@ -14,7 +14,7 @@
 
 	<?php if ( empty( $store ) || empty( $store['tenant_id'] ) ) : ?>
 		<div class="notice notice-warning">
-			<p>Conectando tu tienda con el asistente… Recargá esta página en unos minutos. Si no avanza, contactá a soporte.</p>
+			<p>Conectando tu tienda con el asistente… Recarga esta página en unos minutos. Si no avanza, contacta a soporte.</p>
 			<?php if ( $debug ) : ?>
 				<p>Soporte: <code>wp chatbot provision-auto</code> corre el registro a mano y muestra la bitácora si falla.</p>
 			<?php endif; ?>
@@ -85,11 +85,11 @@
 				</table>
 			</div>
 
-			<!-- PASO 3: Elegí tus canales -->
+			<!-- PASO 3: Elige tus canales -->
 			<?php if ( $current >= 2 ) : ?>
 				<div style="padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px;">
-					<h2>Paso 3: Elegí tus canales</h2>
-					<p>Conectá al menos un canal para que tu bot pueda recibir mensajes. Podés activar los dos.</p>
+					<h2>Paso 3: Elige tus canales</h2>
+					<p>Conecta al menos un canal para que tu bot pueda recibir mensajes. Puedes activar los dos.</p>
 
 					<div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 15px;">
 
@@ -109,7 +109,7 @@
 									</div>
 								<?php elseif ( ! empty( $store['telegram_bot_username'] ) ) : ?>
 									<div style="padding: 12px; background: #fff8e1; border-left: 4px solid #f0ad4e; margin-top: 8px;">
-										Falta un paso: abrí Telegram y escribile cualquier mensaje a
+										Falta un paso: abre Telegram y escríbele cualquier mensaje a
 										<a href="https://t.me/<?php echo esc_attr( $store['telegram_bot_username'] ); ?>" target="_blank" rel="noopener noreferrer">
 											@<?php echo esc_html( $store['telegram_bot_username'] ); ?>
 										</a>
@@ -124,8 +124,8 @@
 							<?php endif; ?>
 							<div id="chatbot-telegram-connect-form" <?php echo ! empty( $store['telegram_verified'] ) ? 'style="display: none; margin-top: 10px;"' : ''; ?>>
 								<p class="description">
-									Creá un bot con <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a>
-									y pegá acá el token que te da.
+									Crea un bot con <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a>
+									y pega aquí el token que te da.
 								</p>
 								<input type="text" id="chatbot-telegram-token" class="regular-text" placeholder="123456:ABC-DEF...">
 								<br><br>
@@ -159,7 +159,7 @@
 								<div style="margin-top: 15px; padding-top: 12px; border-top: 1px dashed #ddd;">
 									<p style="margin-top: 0;"><strong>Conexión directa</strong></p>
 									<p class="description" style="margin-bottom: 10px;">
-										Copiá estos datos de Meta for Developers → tu App → WhatsApp → API Setup.
+										Copia estos datos de Meta for Developers → tu App → WhatsApp → API Setup.
 										El token viaja por HTTPS al servidor del chatbot, que lo guarda cifrado; no queda guardado en WordPress.
 									</p>
 									<p>
@@ -202,19 +202,8 @@
 									placeholder="ej: Hola! Soy Sofia, tu asistente virtual..."
 									><?php echo esc_textarea( $store['welcome_message'] ?? '' ); ?></textarea></td>
 							</tr>
-							<tr>
-								<th><label for="chatbot-trato">Trato al cliente</label></th>
-								<td>
-									<?php $trato = $store['trato'] ?? 'vos'; ?>
-									<select id="chatbot-trato" name="trato">
-										<option value="vos" <?php selected( $trato, 'vos' ); ?>>De vos (“¿Qué querés llevar?”)</option>
-										<option value="usted" <?php selected( $trato, 'usted' ); ?>>De usted (“¿Qué quiere llevar?”)</option>
-									</select>
-									<p class="description">Escribí la bienvenida con el mismo trato.</p>
-								</td>
-							</tr>
 						</table>
-						<p class="description">La bienvenida es lo primero que recibe quien abre el bot. Cómo atiende el bot (tono y reglas) es igual para todas las tiendas; lo único que se elige es el trato.</p>
+						<p class="description">La bienvenida es lo primero que recibe quien abre el bot. Cómo atiende el bot (tono y reglas) es igual para todas las tiendas, y trata al cliente de tú (“¿Qué quieres llevar?”): escribe la bienvenida con el mismo trato.</p>
 						<button type="submit" class="button button-primary">Guardar Configuración</button>
 						<span id="chatbot-config-status" style="margin-left: 10px;"></span>
 					</form>
@@ -252,7 +241,7 @@
 							<span id="chatbot-activate-status" style="margin-left: 10px;"></span>
 						<?php endif; ?>
 					<?php else : ?>
-						<p style="color: #d32f2f;">Completa WooCommerce y conectá al menos un canal (Paso 3) antes de activar.</p>
+						<p style="color: #d32f2f;">Completa WooCommerce y conecta al menos un canal (Paso 3) antes de activar.</p>
 					<?php endif; ?>
 				</div>
 			<?php endif; ?>

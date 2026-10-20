@@ -284,19 +284,18 @@ Reconectar el mismo número en la misma tienda (por ejemplo, con un token nuevo)
 ### 5. PATCH /tenants/{tenant_id}/config
 **Paso 4 — Personalización del asistente**
 
-Guarda el nombre del bot, el mensaje de bienvenida y el trato al cliente. El nombre entra en el prompt
-del bot; la bienvenida es lo que recibe quien abre el bot de Telegram (`/start`), tal cual; el trato
-(`vos` o `usted`, `vos` si nunca se eligió) cambia cómo le habla el bot al cliente en todos sus
-mensajes, también los que arma el sistema. Cómo atiende el bot (tono y reglas) es el mismo para todas
-las tiendas: desde la 1.0.5 no hay instrucciones propias (`system_prompt`). Si un plugin anterior lo
-manda, el Backend lo ignora sin error. `GET /status` devuelve el `trato` guardado.
+Guarda el nombre del bot y el mensaje de bienvenida. El nombre entra en el prompt del bot; la
+bienvenida es lo que recibe quien abre el bot de Telegram (`/start`), tal cual. Cómo atiende el bot
+(tono, reglas y trato) es el mismo para todas las tiendas: trata al cliente de tú en todos sus
+mensajes, también los que arma el sistema. No hay instrucciones propias (`system_prompt`, quitadas en
+la 1.0.5) ni elección de trato (`trato`, que la 1.0.5 mandaba como `vos` o `usted`). Si un plugin
+anterior manda alguno de los dos, el Backend lo ignora sin error.
 
-**Request** (los tres campos son opcionales, al menos uno requerido):
+**Request** (los dos campos son opcionales, al menos uno requerido):
 ```json
 {
   "bot_name": "Sofía",
-  "welcome_message": "¡Hola! Soy Sofía, tu asistente de compras 👋 ¿En qué te ayudo?",
-  "trato": "vos"
+  "welcome_message": "¡Hola! Soy Sofía, tu asistente de compras 👋 ¿En qué te ayudo?"
 }
 ```
 
@@ -311,8 +310,7 @@ manda, el Backend lo ignora sin error. `GET /status` devuelve el `trato` guardad
 **Errores:**
 | Código | Error | Causa |
 |--------|-------|-------|
-| `400` | `MISSING_FIELDS` | No vino ni bot_name, ni welcome_message, ni trato |
-| `400` | `INVALID_TRATO` | El trato no es `vos` ni `usted` |
+| `400` | `MISSING_FIELDS` | No vino ni bot_name ni welcome_message |
 | `401` | `INVALID_API_KEY` | Bearer token inválido |
 | `404` | `TENANT_NOT_FOUND` | El tenant_id no existe |
 | `500` | `DATABASE_ERROR` | Error al guardar configuración |

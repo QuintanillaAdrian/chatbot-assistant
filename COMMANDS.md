@@ -162,17 +162,17 @@ otra tienda, `500` fallo al suscribir en Meta).
 
 ### `PATCH /config`
 
-**Paso 4** — Guarda la configuración del bot (nombre, mensaje de bienvenida y trato: `vos` o `usted`).
-Desde la 1.0.5 no hay instrucciones propias: cómo atiende el bot es igual para todas las tiendas.
+**Paso 4** — Guarda la configuración del bot (nombre y mensaje de bienvenida).
+Cómo atiende el bot (tono, reglas y trato de tú) es igual para todas las tiendas: no hay instrucciones
+propias (desde la 1.0.5) ni elección de trato (desde la 1.0.6).
 
 **Headers:** `X-WP-Nonce: <nonce>`, `Content-Type: application/json`
 
-**Request body** (los tres campos son opcionales, al menos uno requerido):
+**Request body** (los dos campos son opcionales, al menos uno requerido):
 ```json
 {
   "bot_name": "Sofia",
-  "welcome_message": "Hola! ¿En qué te puedo ayudar?",
-  "trato": "usted"
+  "welcome_message": "Hola! ¿En qué te puedo ayudar?"
 }
 ```
 

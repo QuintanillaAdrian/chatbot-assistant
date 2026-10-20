@@ -482,10 +482,12 @@ class Chatbot_Assistant_Public {
 				}
 			}
 
-			$added = WC()->cart->add_to_cart( $item['product_id'], $item['quantity'], $item['variation_id'] );
+			$errores_antes = wc_notice_count( 'error' );
+			$added         = WC()->cart->add_to_cart( $item['product_id'], $item['quantity'], $item['variation_id'] );
 			if ( ! $added ) {
 				// Se sigue con los demás productos; el checkout muestra el carrito real.
 				error_log( "[chatbot-assistant] carrito: no se pudo agregar product_id={$item['product_id']} variation_id={$item['variation_id']}" );
+				$this->replace_add_to_cart_error( $item['product_id'], $errores_antes );
 			}
 		}
 
@@ -494,6 +496,39 @@ class Chatbot_Assistant_Public {
 		$billing_phone_flag = $phone_digits > 0 ? '?billing_phone=' . (int) $phone_digits : '';
 		wp_safe_redirect( home_url( '/checkout/' . $billing_phone_flag ) );
 		exit;
+	}
+
+	/**
+	 * Cambia el aviso de WooCommerce de un producto del link que no entró al carrito por uno que dice
+	 * cuál fue y qué hacer (D24, 2026-10-20). WooCommerce deja el suyo en el idioma del sitio y sin el
+	 * nombre del producto ("Sorry, this product cannot be purchased."): en la prueba, el cliente vio ese
+	 * aviso sobre un carrito con otros productos y no supo que faltaban las zapatillas. Se conserva el
+	 * motivo de WooCommerce entre paréntesis, porque puede ser otro (por ejemplo, que se acabó el stock
+	 * entre que se armó el link y se abrió).
+	 *
+	 * @param int $product_id    Producto que no entró.
+	 * @param int $errores_antes Cantidad de avisos de error que había antes de intentar agregarlo.
+	 */
+	private function replace_add_to_cart_error( $product_id, $errores_antes ) {
+		$avisos  = wc_get_notices();
+		$errores = $avisos['error'] ?? array();
+		$motivos = array();
+		foreach ( array_slice( $errores, $errores_antes ) as $aviso ) {
+			$motivos[] = trim( wp_strip_all_tags( is_array( $aviso ) ? $aviso['notice'] : $aviso ) );
+		}
+		$avisos['error'] = array_slice( $errores, 0, $errores_antes );
+		wc_set_notices( $avisos );
+
+		$producto = wc_get_product( $product_id );
+		$nombre   = $producto ? $producto->get_name() : 'un producto';
+		wc_add_notice(
+			sprintf(
+				'No se pudo agregar «%s» a tu carrito%s. El resto de tu compra sigue aquí; si quieres otra opción, vuelve al chat.',
+				esc_html( $nombre ),
+				$motivos ? ' (' . esc_html( implode( ' ', array_filter( $motivos ) ) ) . ')' : ''
+			),
+			'error'
+		);
 	}
 
 	/**
@@ -864,7 +899,7 @@ class Chatbot_Assistant_Public {
 		unset( $_GET['add-to-cart'], $_GET['quantity'], $_GET['reemplazar_item'], $_GET['limpiar_carrito'], $_GET['variation_id'], $_GET['exp'], $_GET['sig'] );
 
 		wp_die(
-			'<p>' . esc_html( $reason ) . ' Volvé al chat y pedí uno nuevo para completar tu compra.</p>' .
+			'<p>' . esc_html( $reason ) . ' Vuelve al chat y pide uno nuevo para completar tu compra.</p>' .
 			'<p><a href="' . esc_url( home_url() ) . '">Volver a la tienda</a></p>',
 			'Link vencido',
 			array( 'response' => 410, 'back_link' => false )

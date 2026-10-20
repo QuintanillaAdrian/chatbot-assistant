@@ -3,7 +3,7 @@ Contributors: quintanilla
 Tags: woocommerce, whatsapp, chatbot, telegram
 Requires at least: 6.9
 Requires PHP: 8.2
-Stable tag: 1.0.5
+Stable tag: 1.0.6
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,6 +36,16 @@ La guía completa (requisitos, HTTPS detrás de NGINX, WhatsApp, problemas comun
 4. Abrir wp-admin → Asistente Chatbot y seguir los pasos 3 a 5.
 
 == Changelog ==
+
+= 1.0.6 =
+* El bot trata al cliente de tú en todas las tiendas, y el panel también habla de tú. Se quita la
+  elección de trato del Paso 4 (vos o usted, de la 1.0.5): una sola forma, la más general, que es la
+  que se prueba.
+* El aviso de link vencido que ve el cliente en la tienda también pasa a tú.
+* Si un producto del link de compra no entra al carrito (por ejemplo, un vendedor de Dokan que intenta
+  comprar su propio producto), el aviso dice cuál fue y qué hacer, en lugar del genérico de WooCommerce.
+* Al abrir el panel se borran de la configuración guardada los campos que ya no existen (instrucciones
+  propias y trato), aunque la tienda no vuelva a guardar el Paso 4.
 
 = 1.0.5 =
 * El Paso 4 ya no tiene instrucciones propias ("System Prompt"): cómo atiende el bot (tono y reglas)

@@ -64,7 +64,7 @@
 					access_token: document.getElementById('chatbot-wa-access-token').value.trim()
 				};
 				if (!payload.phone_number_id || !payload.waba_id || !payload.access_token) {
-					statusEl.textContent = 'Completá los tres datos';
+					statusEl.textContent = 'Completa los tres datos';
 					return;
 				}
 				waDirectBtn.disabled = true;
@@ -85,7 +85,7 @@
 				var statusEl = document.getElementById('chatbot-telegram-status');
 				var token = document.getElementById('chatbot-telegram-token').value.trim();
 				if (!token) {
-					statusEl.textContent = 'Pegá el token que te dio @BotFather primero';
+					statusEl.textContent = 'Pega el token que te dio @BotFather primero';
 					return;
 				}
 				telegramBtn.disabled = true;
@@ -111,9 +111,9 @@
 		}
 
 		bindReconnect('chatbot-telegram-reconnect-link', 'chatbot-telegram-connect-form',
-			'¿Seguro que querés reconectar? Esto va a reemplazar el bot de Telegram actual.');
+			'¿Seguro que quieres reconectar? Esto va a reemplazar el bot de Telegram actual.');
 		bindReconnect('chatbot-wa-reconnect-link', 'chatbot-wa-connect-form',
-			'¿Seguro que querés reconectar? Esto va a reemplazar el número de WhatsApp actual.');
+			'¿Seguro que quieres reconectar? Esto va a reemplazar el número de WhatsApp actual.');
 
 		// PASO 4 — Personalización.
 		var configForm = document.getElementById('chatbot-config-form');
@@ -124,8 +124,7 @@
 				statusEl.textContent = 'Guardando...';
 				rest('config', 'PATCH', {
 					bot_name: document.getElementById('chatbot-bot-name').value,
-					welcome_message: document.getElementById('chatbot-welcome-msg').value,
-					trato: document.getElementById('chatbot-trato').value
+					welcome_message: document.getElementById('chatbot-welcome-msg').value
 				})
 					.then(function (d) {
 						statusEl.textContent = d.success ? 'Guardado correctamente' : ('Error: ' + (d.error || ''));

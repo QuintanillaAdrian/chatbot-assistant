@@ -463,9 +463,10 @@ class Chatbot_Assistant_Provision {
         if ( isset( $status['bot_name'] ) ) {
             $store['bot_name'] = $status['bot_name'];
         }
-        if ( isset( $status['trato'] ) ) {
-            $store['trato'] = $status['trato'];
-        }
+        // Campos que ya no existen: system_prompt (hasta la 1.0.4) y trato (la 1.0.5). Se borran acá, que
+        // corre cada vez que se abre el panel, y no solo al guardar el Paso 4: una tienda que nunca vuelve a
+        // guardar la configuración también queda limpia.
+        unset( $store['system_prompt'], $store['trato'] );
         if ( isset( $status['phone_number'] ) ) {
             $store['phone_number'] = $status['phone_number'];
         }
@@ -658,16 +659,16 @@ class Chatbot_Assistant_Provision {
     }
 
     /**
-     * PASO 4: Save bot configuration (nombre, mensaje bienvenida, trato).
-     * Desde la 1.0.5 no hay instrucciones propias (system_prompt): todas las tiendas usan el mismo prompt
-     * y lo único que eligen es el trato al cliente (vos o usted).
+     * PASO 4: Save bot configuration (nombre y mensaje de bienvenida).
+     * Desde la 1.0.5 no hay instrucciones propias (system_prompt): todas las tiendas usan el mismo prompt.
+     * Desde la 1.0.6 tampoco se elige el trato: el bot trata de tú en todas las tiendas (la 1.0.5 dejaba
+     * elegir entre vos y usted).
      */
     public static function handle_save_config( $request ) {
         $params = $request->get_json_params();
 
         $bot_name          = sanitize_text_field( $params['bot_name'] ?? '' );
         $welcome_message   = sanitize_text_field( $params['welcome_message'] ?? '' );
-        $trato             = in_array( $params['trato'] ?? '', array( 'vos', 'usted' ), true ) ? $params['trato'] : 'vos';
 
         $store = get_option( self::OPTION_KEY, array() );
         if ( empty( $store['tenant_id'] ) ) {
@@ -683,7 +684,7 @@ class Chatbot_Assistant_Provision {
             ), 400 );
         }
 
-        $config = array( 'trato' => $trato );
+        $config = array();
         if ( ! empty( $bot_name ) ) {
             $config['bot_name'] = $bot_name;
         }
@@ -704,8 +705,6 @@ class Chatbot_Assistant_Provision {
         // Guardar localmente
         $store['bot_name']        = $bot_name;
         $store['welcome_message'] = $welcome_message;
-        $store['trato']           = $trato;
-        unset( $store['system_prompt'] ); // lo que guardaron versiones anteriores a la 1.0.5
         $store['current_step']    = self::advanced_step( $store, 4 );
         update_option( self::OPTION_KEY, $store, false );
 

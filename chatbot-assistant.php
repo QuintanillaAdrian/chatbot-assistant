@@ -11,7 +11,7 @@
  * Plugin Name:       Chatbot Assistant
  * Plugin URI:        https://github.com/QuintanillaAdrian/plugintest.git
  * Description:       Asistente de chatbot para WooCommerce via WhatsApp Business.
- * Version:           1.0.5
+ * Version:           1.0.6
  * Author:            Quintanilla
  * Author URI:        https://portafolio-adrianquintanilla.vercel.app/
  * License:           GPL-2.0+
@@ -26,7 +26,7 @@ if ( ! defined( 'WPINC' ) ) {
 
 // Va en el `?ver=` del JS del panel: subirla cada vez que cambie ese archivo, o el navegador sigue
 // usando la copia vieja de su caché (pasó con 1.0.0 → 1.0.1).
-define( 'CHATBOT_ASSISTANT_VERSION', '1.0.5' );
+define( 'CHATBOT_ASSISTANT_VERSION', '1.0.6' );
 
 // Sin hooks de activación/desactivación (2026-10-08): el onboarding arranca solo la primera vez
 // que un admin abre wp-admin (Chatbot_Assistant_Provision::maybe_run_pending_provision), que
