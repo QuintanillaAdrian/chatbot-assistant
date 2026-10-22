@@ -311,7 +311,7 @@ paso. Alcanza con un canal (WhatsApp o Telegram) para activar el bot.
 
 | Función | Cómo |
 |---|---|
-| **Links de compra** | `/entrar/{token}` inicia sesión como el cliente; `/carrito/{token}` carga todos los productos de la compra; `/ir/{token}` agrega o cambia un producto. Los arma el Backend; el plugin los valida (firma de 64 bits con el secreto de links, vencimiento futuro y de no más de una hora) y los ejecuta. |
+| **Links de compra** | `/entrar/{token}` inicia sesión como el cliente; `/carrito/{token}` carga todos los productos de la compra (desde la 1.0.7, un producto con cantidad 0 se saca del carrito: así un solo link deja el carrito como quedó cuando el cliente sacó algo en la charla, aunque lo haya sacado varios mensajes antes; si ese producto ya no estaba, no pasa nada. Con la 1.0.6 la línea también sale, pero WooCommerce muestra un aviso de "No se pudo agregar" de más: esa versión hay que actualizarla); `/ir/{token}` agrega o cambia un producto. Los arma el Backend; el plugin los valida (firma de 64 bits con el secreto de links, vencimiento futuro y de no más de una hora) y los ejecuta. |
 | **Aviso de pedido nuevo** | Al crearse un pedido (checkout clásico o de bloques, o pago completado) avisa al Backend, que borra el carrito pendiente de esa conversación. |
 | **Búsqueda por teléfono** | `GET /wp-json/chatbot/v1/customers/lookup-by-phone` y `/orders/lookup-by-phone`: el Backend identifica al cliente y sus pedidos (también los de invitado). Compatible con HPOS y con el almacenamiento clásico. |
 | **Webhooks de estado** | `POST /wp-json/chatbot/v1/webhook/backend`: el Backend avisa activación, suspensión, credenciales inválidas, etc. |

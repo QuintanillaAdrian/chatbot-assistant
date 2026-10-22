@@ -3,7 +3,7 @@ Contributors: quintanilla
 Tags: woocommerce, whatsapp, chatbot, telegram
 Requires at least: 6.9
 Requires PHP: 8.2
-Stable tag: 1.0.6
+Stable tag: 1.0.7
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,6 +36,11 @@ La guía completa (requisitos, HTTPS detrás de NGINX, WhatsApp, problemas comun
 4. Abrir wp-admin → Asistente Chatbot y seguir los pasos 3 a 5.
 
 == Changelog ==
+
+= 1.0.7 =
+* El link de compra puede sacar productos: si en la misma charla el cliente sacó algo del carrito y compró
+  otra cosa, un solo link deja el carrito como quedó (antes llegaba un segundo link de "Sacar"). Un
+  producto con cantidad 0 en el link se saca y no se vuelve a agregar.
 
 = 1.0.6 =
 * El bot trata al cliente de tú en todas las tiendas, y el panel también habla de tú. Se quita la

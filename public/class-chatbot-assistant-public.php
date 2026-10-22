@@ -482,6 +482,13 @@ class Chatbot_Assistant_Public {
 				}
 			}
 
+			// Cantidad 0 = sacar la línea y no volver a agregarla (1.0.7): el bot manda así lo que el cliente
+			// sacó en la misma charla, para que un solo link deje el carrito como quedó (antes iba un segundo
+			// link de "Sacar X").
+			if ( $item['quantity'] < 1 ) {
+				continue;
+			}
+
 			$errores_antes = wc_notice_count( 'error' );
 			$added         = WC()->cart->add_to_cart( $item['product_id'], $item['quantity'], $item['variation_id'] );
 			if ( ! $added ) {
